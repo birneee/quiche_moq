@@ -1,0 +1,12 @@
+[package]
+name = "video-client"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+log = { workspace = true }
+env_logger = { workspace = true }
+quiche_mio_runner = { workspace = true }
+quiche_moq = { workspace = true }
+quiche_webtransport = { workspace = true }
+quiche_h3_utils = { workspace = true }

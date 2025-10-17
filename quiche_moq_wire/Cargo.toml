@@ -1,0 +1,7 @@
+[package]
+name = "quiche_moq_wire"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+octets = { workspace = true }

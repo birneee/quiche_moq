@@ -1,0 +1,38 @@
+[workspace]
+members = [
+    "moq_utils",
+    "quiche_h3_utils",
+    "quiche_moq",
+    "quiche_moq/examples/*", "quiche_moq_wire",
+    "quiche_utils",
+    "quiche_webtransport",
+    "short_buf",
+]
+resolver = "2"
+
+[workspace.dependencies]
+boring = "4.19.0"
+bytes = "1.10.1"
+chrono = "0.4.42"
+clap = { version = "4.5.46", features = ["derive", "env"] }
+env_logger = "0.11.8"
+log = "0.4.28"
+mio = "1.0"
+mp4 = "0.14.0"
+octets = "0.3"
+quiche = { version = "0.24"}
+quiche_endpoint = { git = "https://github.com/birneee/quiche_endpoint" }
+quiche_h3_utils = { path="quiche_h3_utils" }
+quiche_mio_runner = { git = "https://github.com/birneee/quiche_mio_runner" }
+quiche_moq = { path="quiche_moq" }
+quiche_moq_wire = { path="quiche_moq_wire" }
+quiche_utils = { path="quiche_utils" }
+quiche_webtransport = { path="quiche_webtransport" }
+rcgen = "0.13.2"
+short_buf = { path = "short_buf" }
+smallvec = "2.0.0-alpha.11"
+url = "2.5.7"
+
+[patch.crates-io]
+quiche = { git="https://github.com/birneee/quiche", branch = "webtransport_streams" }
+octets = { git="https://github.com/birneee/quiche", branch = "webtransport_streams" }

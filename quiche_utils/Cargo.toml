@@ -1,0 +1,9 @@
+[package]
+name = "quiche_utils"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+log = { workspace = true }
+boring = { workspace = true }
+rcgen = { workspace = true }

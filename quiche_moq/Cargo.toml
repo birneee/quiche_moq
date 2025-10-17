@@ -1,0 +1,17 @@
+[package]
+name = "quiche_moq"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+octets = { workspace = true }
+quiche = { workspace = true }
+quiche_webtransport = { workspace = true }
+quiche_moq_wire = { workspace = true }
+short_buf = { workspace = true }
+log = { workspace = true }
+smallvec = { workspace = true }
+quiche_utils = { workspace = true }
+
+[dev-dependencies]
+quiche = { workspace = true, features = ["internal"]}

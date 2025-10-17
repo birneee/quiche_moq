@@ -1,0 +1,13 @@
+[package]
+name = "quiche_webtransport"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+quiche = { workspace = true , features = ["boringssl-boring-crate"]}
+octets = { workspace = true }
+short_buf = { workspace = true }
+log = { workspace = true }
+url = { workspace = true }
+boring = { workspace = true }
+quiche_h3_utils = { workspace = true }

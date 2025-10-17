@@ -1,0 +1,17 @@
+[package]
+name = "video-server"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+short_buf = { workspace = true }
+mp4 = { workspace = true }
+log = { workspace = true }
+env_logger = { workspace = true }
+mio = { workspace = true, features = ["os-ext"]}
+quiche_mio_runner = { workspace = true }
+quiche_moq = { workspace = true }
+quiche_webtransport = { workspace = true }
+quiche_h3_utils = { workspace = true }
+quiche_utils = { workspace = true }
+boring = { workspace = true }

@@ -1,0 +1,12 @@
+[package]
+name = "time-client"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+quiche_mio_runner = {workspace = true}
+quiche_webtransport = {workspace = true}
+quiche_h3_utils = { workspace = true}
+quiche_moq = {workspace = true}
+log = { workspace = true }
+env_logger = { workspace = true }
