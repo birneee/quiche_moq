@@ -36,8 +36,8 @@ impl FromBytes for ClientSetupMessage {
     fn from_bytes(b: &mut Octets, version: Version) -> crate::error::Result<Self> {
         let header = ControlMessageHeader::from_bytes(b, version)?;
         match version {
-            MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_10 => assert_eq!(header.ty, CLIENT_SETUP_CONTROL_MESSAGE_ID_VERSION_UNTIL_10),
-            MOQ_VERSION_DRAFT_11..=MOQ_VERSION_DRAFT_13 => assert_eq!(header.ty, CLIENT_SETUP_CONTROL_MESSAGE_ID),
+            MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_10 => assert_eq!(header.ty(), CLIENT_SETUP_CONTROL_MESSAGE_ID_VERSION_UNTIL_10),
+            MOQ_VERSION_DRAFT_11..=MOQ_VERSION_DRAFT_13 => assert_eq!(header.ty(), CLIENT_SETUP_CONTROL_MESSAGE_ID),
             _ => unimplemented!()
         };
         let start_off = b.off();
@@ -48,7 +48,7 @@ impl FromBytes for ClientSetupMessage {
         }
         let setup_parameters = SetupParameters::from_bytes(b, version)?;
         let payload_len = b.off() - start_off;
-        assert_eq!(payload_len, header.len);
+        assert_eq!(payload_len, header.len());
         Ok(Self{
             supported_versions,
             setup_parameters,
@@ -59,7 +59,7 @@ impl FromBytes for ClientSetupMessage {
 #[cfg(test)]
 mod tests {
     use crate::bytes::{FromBytes, ToBytes};
-    use crate::MOQ_VERSION_DRAFT_07;
+    use crate::{MOQ_VERSION_LITE_01_BY_KIXELATED, MOQ_VERSION_DRAFT_07};
     use crate::{Parameter, SetupParameters};
     use octets::{Octets, OctetsMut};
     use crate::control_message::client_setup::ClientSetupMessage;
@@ -73,7 +73,8 @@ mod tests {
         for b in msgs {
             let mut b = Octets::with_slice(&b);
             let cm = ClientSetupMessage::from_bytes(&mut b, MOQ_VERSION_DRAFT_07).unwrap();
-            println!("{:?}", cm)
+            println!("{:?}", cm);
+            assert_eq!(&cm.supported_versions, &[MOQ_VERSION_LITE_01_BY_KIXELATED, MOQ_VERSION_DRAFT_07]);
         }
     }
 

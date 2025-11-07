@@ -13,30 +13,39 @@ use quiche_h3_utils::{hdrs_to_strings, METHOD_CONNECT};
 
 /// A Webtransport connections manages the state of one HTTP connection.
 /// Managing multiple Webtransport sessions.
-#[derive(Default)]
 pub struct Connection {
-    /// Pending requests for opening WebTransport sessions.
-    /// Only used by client.
-    /// Key is the session id.
-    pending_requests: HashMap<u64, PendingRequest>,
     /// Established WebTransport sessions.
     /// Key is session id.
     sessions: HashMap<u64, Session>,
     pub(crate) streams: HashMap<u64, Stream>,
-    /// Pending responses to a WebTransport CONNECT request.
-    /// Key is the session id.
-    /// Only used by server.
-    pending_responds: HashMap<u64, PendingResponse>,
     closed: bool,
+    perspective: Perspective,
 }
 
+enum Perspective {
+    Client {
+        /// Pending requests for opening WebTransport sessions.
+        /// Key is the session id.
+        pending_requests: HashMap<u64, PendingRequest>,
+    },
+    Server {
+        /// Pending responses to a WebTransport CONNECT request.
+        /// Key is the session id.
+        pending_responds: HashMap<u64, PendingResponse>,
+    }
+}
+
+
+
 impl Connection {
-    pub fn new() -> Self {
+    pub fn new(is_server: bool) -> Self {
         Self {
             sessions: HashMap::new(),
             streams: HashMap::new(),
-            pending_requests: HashMap::new(),
-            pending_responds: HashMap::new(),
+            perspective: match is_server {
+                true => Perspective::Server { pending_responds: HashMap::new() },
+                false => Perspective::Client { pending_requests: HashMap::new() },
+            },
             closed: false,
         }
     }
@@ -49,6 +58,7 @@ impl Connection {
         quic: &mut quiche::Connection,
         url: Url,
     ) -> SessionId {
+        let Perspective::Client { pending_requests } = &mut self.perspective else { panic!("Perspective is not client") };
         let hdrs = vec![
                 h3::Header::new(b":method", METHOD_CONNECT),
                 h3::Header::new(b":protocol", PROTOCOL_HEADER_WEBTRANSPORT),
@@ -59,7 +69,7 @@ impl Connection {
         ];
         trace!("send {:?}", hdrs_to_strings(&hdrs));
         let session_id = h3.send_request(quic, &hdrs, false).unwrap();
-        self.pending_requests
+        pending_requests
             .insert(session_id, PendingRequest::new());
         session_id
     }
@@ -94,19 +104,21 @@ impl Connection {
             }
             stream.readable = true;
         }
-        self.pending_responds.retain(|_, resp| {
-            h3.send_response(
-                quic,
-                resp.session_id(),
-                &[
-                    h3::Header::new(b":status", b"200"),
-                    h3::Header::new(b"sec-webtransport-http3-draft", b"draft02"),
-                ],
-                false,
-            )
-            .unwrap();
-            return false;
-        });
+        if let Perspective::Server { pending_responds } = &mut self.perspective {
+            pending_responds.retain(|_, resp| {
+                h3.send_response(
+                    quic,
+                    resp.session_id(),
+                    &[
+                        h3::Header::new(b":status", b"200"),
+                        h3::Header::new(b"sec-webtransport-http3-draft", b"draft02"),
+                    ],
+                    false,
+                )
+                    .unwrap();
+                return false;
+            });
+        }
     }
 
     /// return readable sessions ids
@@ -181,14 +193,14 @@ impl Connection {
     /// Receive headers from h3.
     /// Must be called to establish sessions.
     pub fn recv_hdrs(&mut self, stream_id: u64, headers: &Vec<h3::Header>) {
-        let mut status_200 = false;
+        let mut status: Option<[u8;3]> = None;
         let mut method_connect = false;
         let mut wt_draft_supported = false;
         let mut wt_draft_selected = false;
         let mut protocol_webtransport = false;
         for header in headers {
             match (header.name(), header.value()) {
-                (b":status", b"200") => status_200 = true,
+                (b":status", s) => status = Some(<[u8; 3]>::try_from(s).unwrap()),
                 (b":method", b"CONNECT") => method_connect = true,
                 (b":protocol", b"webtransport") => protocol_webtransport = true,
                 (b"sec-webtransport-http3-draft02", b"1") => wt_draft_supported = true,
@@ -199,18 +211,23 @@ impl Connection {
 
         trace!("{:?}", hdrs_to_strings(headers));
 
-        if method_connect && protocol_webtransport && wt_draft_supported {
-            self.sessions.insert(stream_id, Session::new(stream_id));
-            self.pending_responds
-                .insert(stream_id, PendingResponse::new(stream_id));
-        } else {
-            let req = self.pending_requests.remove(&stream_id).unwrap();
-            assert_eq!(req.session_id(), stream_id);
-            assert!(status_200);
-            assert!(wt_draft_selected);
-            let session_id = stream_id;
-            debug!("webtransport session {} established", session_id);
-            self.sessions.insert(session_id, Session::new(session_id));
+        match &mut self.perspective {
+            Perspective::Server { pending_responds } => {
+                if method_connect && protocol_webtransport && wt_draft_supported {
+                    self.sessions.insert(stream_id, Session::accept(stream_id));
+                    pending_responds
+                        .insert(stream_id, PendingResponse::new(stream_id));
+                }
+            }
+            Perspective::Client { pending_requests } => {
+                let req = pending_requests.remove(&stream_id).unwrap();
+                assert_eq!(req.session_id(), stream_id);
+                assert_eq!(status, Some(*b"200"));
+                assert!(wt_draft_selected);
+                let session_id = stream_id;
+                debug!("webtransport session {} established", session_id);
+                self.sessions.insert(session_id, Session::accept(session_id));
+            }
         }
     }
 

@@ -1,7 +1,8 @@
 use crate::bytes::ToBytes;
-use crate::{RequestId, Version, ANNOUNCE_OK_CONTROL_MESSAGE_ID, MOQ_VERSION_DRAFT_07, MOQ_VERSION_DRAFT_10, MOQ_VERSION_DRAFT_11, MOQ_VERSION_DRAFT_13};
-use octets::OctetsMut;
+use crate::{FromBytes, RequestId, Version, ANNOUNCE_OK_CONTROL_MESSAGE_ID, MOQ_VERSION_DRAFT_07, MOQ_VERSION_DRAFT_10, MOQ_VERSION_DRAFT_11, MOQ_VERSION_DRAFT_13};
+use octets::{Octets, OctetsMut};
 use crate::control_message::encode_control_message;
+use crate::control_message::header::ControlMessageHeader;
 use crate::namespace::Namespace;
 
 #[derive(Debug)]
@@ -28,10 +29,31 @@ impl ToBytes for AnnounceOkMessage {
                 }
                 _ => unimplemented!()
             }
-            b.put_varint(version)?;
             Ok(())
         })
     }
 }
 
-
+impl FromBytes for AnnounceOkMessage {
+    fn from_bytes(b: &mut Octets, version: Version) -> crate::Result<Self> {
+        let header = ControlMessageHeader::from_bytes(b, version)?;
+        assert_eq!(header.ty(), ANNOUNCE_OK_CONTROL_MESSAGE_ID);
+        match version {
+            MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_10 => {
+                let track_namespace = Some(Namespace::from_bytes(b, version)?);
+                Ok(Self{
+                    track_namespace,
+                    request_id: None,
+                })
+            }
+            MOQ_VERSION_DRAFT_11..=MOQ_VERSION_DRAFT_13 => {
+                let request_id = Some(b.get_varint()?);
+                Ok(Self {
+                    request_id,
+                    track_namespace: None,
+                })
+            }
+            _ => unimplemented!()
+        }
+    }
+}

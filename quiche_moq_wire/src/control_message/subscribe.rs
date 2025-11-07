@@ -45,7 +45,7 @@ impl SubscribeMessage {
 impl FromBytes for SubscribeMessage {
     fn from_bytes(b: &mut Octets, version: Version) -> crate::error::Result<Self> {
         let header = ControlMessageHeader::from_bytes(b, version)?;
-        assert_eq!(header.ty, SUBSCRIBE_CONTROL_MESSAGE_ID);
+        assert_eq!(header.ty(), SUBSCRIBE_CONTROL_MESSAGE_ID);
         let request_id = b.get_varint()?;
         let track_alias = match version {
             MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_11 => Some(b.get_varint()?),

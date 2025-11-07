@@ -14,11 +14,20 @@ use std::time::{Duration, Instant};
 use boring::ssl::{SslContextBuilder, SslMethod};
 use quiche_utils::cert::load_or_generate_keys;
 
-#[derive(Default)]
 struct ConnAppData {
     h3_conn: Option<h3::Connection>,
     moq_session: Option<moq::MoqTransportSession>,
     wt_conn: quiche_webtransport::Connection,
+}
+
+impl Default for ConnAppData {
+    fn default() -> Self {
+        Self {
+            h3_conn: None,
+            moq_session: None,
+            wt_conn: quiche_webtransport::Connection::new(true),
+        }
+    }
 }
 
 struct AppData {

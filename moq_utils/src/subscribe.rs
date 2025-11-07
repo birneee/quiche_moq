@@ -46,7 +46,7 @@ pub(crate) fn run_subscribe(args: &SubscribeArgs) {
         (),
     );
 
-    let socket = Socket::bind("[::]:0".parse().unwrap(), false, false, false).unwrap();
+    let socket = Socket::bind("0.0.0.0:0".parse().unwrap(), false, false, false).unwrap();
 
     let url = Url::parse(&args.url).unwrap();
     let peer_addr = url
@@ -95,7 +95,7 @@ pub(crate) fn run_subscribe(args: &SubscribeArgs) {
         },
         ConnAppData {
             h3_conn: None,
-            wt_conn: wt::Connection::new(),
+            wt_conn: wt::Connection::new(false),
             moq_session: None,
             moq_session_id: None,
             url,
@@ -197,7 +197,7 @@ fn post_handle_recvs(runner: &mut Runner) {
                     wt_conn,
                     {
                         let mut c = moq::Config::default();
-                        c.setup_version = moq::wire::MOQ_VERSION_DRAFT_07;
+                        c.setup_version = conn.app_data.args.setup_version.into();
                         c.ignore_max_request_quota = true;
                         c
                     },
@@ -235,6 +235,7 @@ fn post_handle_recvs(runner: &mut Runner) {
             None => {
                 match moq_session.poll_subscribe_response(request_id) {
                     Some(Ok((track_alias, _cm))) => {
+                        info!("subscribed to: {} {}", conn.app_data.args.namespace, conn.app_data.args.trackname);
                         conn.app_data.track_alias = Some(track_alias);
                         track_alias
                     },
@@ -249,7 +250,7 @@ fn post_handle_recvs(runner: &mut Runner) {
                 match moq_session
                     .read_obj_hdr(track_alias, wt_conn, h3_conn, quic_conn) {
                     Ok(obj_hdr) => {
-                        info!("{:?}", obj_hdr);
+                        debug!("{:?}", obj_hdr);
                         conn.app_data.obj_hdr = Some(obj_hdr);
                         conn.app_data.obj_hdr.as_ref().unwrap()
                     },
@@ -270,7 +271,11 @@ fn post_handle_recvs(runner: &mut Runner) {
             };
             unsafe { buf.advance_mut(n) }
         }
-        info!("finish obj");
+        debug!("finish obj");
+        if !conn.app_data.args.separator.is_empty() {
+            let separator = conn.app_data.args.separator.as_bytes();
+            conn.app_data.obj_buf.extend_from_slice(separator);
+        }
         if let Some(output) = &mut conn.app_data.output {
             output.write_all(conn.app_data.obj_buf.as_ref()).unwrap();
         }

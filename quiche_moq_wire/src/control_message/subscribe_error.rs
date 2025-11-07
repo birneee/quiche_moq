@@ -17,6 +17,7 @@ impl SubscribeErrorMessage {
     pub fn request_id(&self) -> RequestId {
         self.request_id
     }
+    pub fn error_code(&self) -> u64 { self. error_code }
 }
 
 impl FromBytes for SubscribeErrorMessage {

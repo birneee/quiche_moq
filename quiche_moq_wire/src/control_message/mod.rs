@@ -1,6 +1,6 @@
 use crate::bytes::{FromBytes, ToBytes};
 use crate::error::Error::ProtocolViolation;
-use crate::{control_message, Version, ANNOUNCE_CONTROL_MESSAGE_ID, CLIENT_SETUP_CONTROL_MESSAGE_ID, CLIENT_SETUP_CONTROL_MESSAGE_ID_VERSION_UNTIL_10, MOQ_VERSION_DRAFT_07, MOQ_VERSION_DRAFT_10, MOQ_VERSION_DRAFT_11, MOQ_VERSION_DRAFT_13, REQUEST_BLOCKED_CONTROL_MESSAGE_ID, SERVER_SETUP_CONTROL_MESSAGE_ID, SERVER_SETUP_CONTROL_MESSAGE_ID_VERSION_UNTIL_10, SUBSCRIBE_CONTROL_MESSAGE_ID, SUBSCRIBE_DONE_CONTROL_MESSAGE_ID, SUBSCRIBE_ERROR_CONTROL_MESSAGE_ID, SUBSCRIBE_OK_CONTROL_MESSAGE_ID, UNSUBSCRIBE_NAMESPACE_MESSAGE_ID};
+use crate::{control_message, Version, ANNOUNCE_CONTROL_MESSAGE_ID, ANNOUNCE_OK_CONTROL_MESSAGE_ID, CLIENT_SETUP_CONTROL_MESSAGE_ID, CLIENT_SETUP_CONTROL_MESSAGE_ID_VERSION_UNTIL_10, MOQ_VERSION_DRAFT_07, MOQ_VERSION_DRAFT_10, MOQ_VERSION_DRAFT_11, MOQ_VERSION_DRAFT_13, REQUEST_BLOCKED_CONTROL_MESSAGE_ID, SERVER_SETUP_CONTROL_MESSAGE_ID, SERVER_SETUP_CONTROL_MESSAGE_ID_VERSION_UNTIL_10, SUBSCRIBE_CONTROL_MESSAGE_ID, SUBSCRIBE_DONE_CONTROL_MESSAGE_ID, SUBSCRIBE_ERROR_CONTROL_MESSAGE_ID, SUBSCRIBE_OK_CONTROL_MESSAGE_ID, TRACK_STATUS_CONTROL_MESSAGE_ID, UNSUBSCRIBE_NAMESPACE_MESSAGE_ID};
 use octets::{Octets, OctetsMut};
 pub use announce::AnnounceMessage;
 pub use announce_ok::AnnounceOkMessage;
@@ -12,6 +12,7 @@ pub use subscribe_done::SubscribeDoneMessage;
 pub use subscribe_error::SubscribeErrorMessage;
 pub use subscribe_ok::SubscribeOkMessage;
 pub use unsubscribe_namespace::UnsubscribeNamespaceMessage;
+use crate::control_message::track_status::TrackStatusMessage;
 use crate::octets::{peek_varint, put_u16_at, put_varint_with_len_at};
 
 mod announce;
@@ -25,6 +26,7 @@ mod subscribe_done;
 mod subscribe_ok;
 mod subscribe_error;
 mod unsubscribe_namespace;
+mod track_status;
 
 #[derive(Debug)]
 pub enum ControlMessage {
@@ -38,6 +40,7 @@ pub enum ControlMessage {
     Announce(AnnounceMessage),
     AnnounceOk(AnnounceOkMessage),
     UnsubscribeNamespace(UnsubscribeNamespaceMessage),
+    TrackStatus(TrackStatusMessage),
 }
 
 impl ControlMessage {
@@ -67,6 +70,7 @@ impl ToBytes for ControlMessage {
             ControlMessage::AnnounceOk(m) => m.to_bytes(b, version)?,
             ControlMessage::ServerSetup(m) => m.to_bytes(b, version)?,
             ControlMessage::SubscribeOk(m) => m.to_bytes(b, version)?,
+            ControlMessage::Announce(m) => m.to_bytes(b, version)?,
             _ => unimplemented!(),
         };
         debug_assert!(Self::length_ok(b, start_off, version));
@@ -129,6 +133,8 @@ impl FromBytes for ControlMessage {
                 ControlMessage::Subscribe(SubscribeMessage::from_bytes(b, version)?)
             }
             UNSUBSCRIBE_NAMESPACE_MESSAGE_ID => ControlMessage::UnsubscribeNamespace(UnsubscribeNamespaceMessage::from_bytes(b, version)?),
+            TRACK_STATUS_CONTROL_MESSAGE_ID => ControlMessage::TrackStatus(TrackStatusMessage::from_bytes(b, version)?),
+            ANNOUNCE_OK_CONTROL_MESSAGE_ID => ControlMessage::AnnounceOk(AnnounceOkMessage::from_bytes(b, version)?),
             _ => {
                 return Err(ProtocolViolation(format!(
                     "unexpected control message with id {}",

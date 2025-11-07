@@ -9,7 +9,7 @@ use log::{debug, info};
 use mio::unix::pipe::Receiver;
 use mio::Interest;
 use quiche_mio_runner::quiche_endpoint::quiche::{h3, PROTOCOL_VERSION};
-use quiche_mio_runner::quiche_endpoint::{quiche, EndpointConfig, ServerConfig};
+use quiche_mio_runner::quiche_endpoint::{quiche, Conn, EndpointConfig, ServerConfig};
 use quiche_h3_utils::{hdrs_to_strings, ALPN_HTTP_3};
 use quiche_mio_runner as runner;
 use quiche_mio_runner::{quiche_endpoint, Socket};
@@ -23,12 +23,22 @@ use boring::ssl::{SslContextBuilder, SslMethod};
 use quiche_moq::wire::TrackAlias;
 use quiche_utils::cert::load_or_generate_keys;
 
-#[derive(Default)]
 struct ConnAppData {
     h3_conn: Option<h3::Connection>,
     moq_session: Option<moq::MoqTransportSession>,
     wt_conn: quiche_webtransport::Connection,
     tracks: HashMap<TrackAlias, Mp4TrackState>,
+}
+
+impl Default for ConnAppData {
+    fn default() -> Self {
+        Self {
+            h3_conn: None,
+            moq_session: None,
+            wt_conn: quiche_webtransport::Connection::new(true),
+            tracks: Default::default(),
+        }
+    }
 }
 
 struct AppData {

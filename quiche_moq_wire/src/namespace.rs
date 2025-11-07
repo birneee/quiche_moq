@@ -4,7 +4,7 @@ use octets::{Octets, OctetsMut};
 use std::fmt::{Debug, Formatter};
 use crate::tuple::Tuple;
 
-pub struct Namespace(Tuple);
+pub struct Namespace(pub Tuple);
 
 impl FromBytes for Namespace {
     fn from_bytes(b: &mut Octets, version: Version) -> crate::error::Result<Self> {
@@ -13,8 +13,8 @@ impl FromBytes for Namespace {
 }
 
 impl ToBytes for Namespace {
-    fn to_bytes(&self, _b: &mut OctetsMut, _version: Version) -> crate::error::Result<()> {
-        todo!()
+    fn to_bytes(&self, b: &mut OctetsMut, version: Version) -> crate::error::Result<()> {
+        self.0.to_bytes(b, version)
     }
 }
 

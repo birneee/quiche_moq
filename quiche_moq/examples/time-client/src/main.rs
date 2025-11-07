@@ -59,7 +59,7 @@ fn main() {
         },
         ConnAppData {
             h3_conn: None,
-            wt_conn: wt::Connection::new(),
+            wt_conn: wt::Connection::new(false),
             moq_session: None,
             subscribed: false,
             moq_session_id: None,

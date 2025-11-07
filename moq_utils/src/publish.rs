@@ -74,7 +74,7 @@ pub(crate) fn run_publish(args: &PublishArgs) {
         },
         ConnAppData {
             h3_conn: None,
-            wt_conn: wt::Connection::new(),
+            wt_conn: wt::Connection::new(false),
             moq_session: None,
             moq_session_id: None,
             url,
@@ -178,6 +178,7 @@ fn post_handle_recvs(runner: &mut Runner) {
         if moq_session.initialized() && !conn.app_data.moq_initialized_msg{
             conn.app_data.moq_initialized_msg = true;
             info!("moq initialized");
+            moq_session.announce(quic_conn, wt_conn, vec![b"todo".to_vec()]).unwrap()
         }
     }
     //todo collect garbage

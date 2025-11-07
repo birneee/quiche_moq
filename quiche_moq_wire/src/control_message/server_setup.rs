@@ -40,14 +40,14 @@ impl FromBytes for ServerSetupMessage {
         let header = ControlMessageHeader::from_bytes(b, version)?;
         match version {
             MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_10 => {
-                assert_eq!(header.ty, SERVER_SETUP_CONTROL_MESSAGE_ID_VERSION_UNTIL_10);
+                assert_eq!(header.ty(), SERVER_SETUP_CONTROL_MESSAGE_ID_VERSION_UNTIL_10);
             }
             MOQ_VERSION_DRAFT_11..=MOQ_VERSION_DRAFT_13 => {
-                assert_eq!(header.ty, SERVER_SETUP_CONTROL_MESSAGE_ID);
+                assert_eq!(header.ty(), SERVER_SETUP_CONTROL_MESSAGE_ID);
             }
             _ => unimplemented!()
         }
-        assert!(b.cap() >= header.len as usize);
+        assert!(b.cap() >= header.len());
         let selected_version = b.get_varint().unwrap();
         let setup_parameters = SetupParameters::from_bytes(b, version)?;
         Ok(Self {
@@ -59,6 +59,7 @@ impl FromBytes for ServerSetupMessage {
 
 #[cfg(test)]
 mod test {
+    use crate::control_message::ControlMessage;
     use super::*;
     use crate::MOQ_VERSION_DRAFT_07;
 
@@ -66,7 +67,16 @@ mod test {
     fn decode_draft7() {
         let b = [0x40, 0x41, 0xc, 0xc0, 0x0, 0x0, 0x0, 0xff, 0x0, 0x0, 0x7, 0x1, 0x0, 0x1, 0x3];
         let mut b = Octets::with_slice(&b);
-        let cm = ServerSetupMessage::from_bytes(&mut b, MOQ_VERSION_DRAFT_07).unwrap();
-        println!("{:?}", cm)
+        let cm = ControlMessage::from_bytes(&mut b, MOQ_VERSION_DRAFT_07).unwrap();
+        assert_eq!(b.cap(), 0);
+        assert!(matches!(cm, ControlMessage::ServerSetup(..)));
+        println!("{:?}", cm);
+
+        let b = [0x40, 0x41, 0x9, 0xc0, 0x0, 0x0, 0x0, 0xff, 0xd, 0xad, 0x1, 0x0];
+        let mut b = Octets::with_slice(&b);
+        let cm = ControlMessage::from_bytes(&mut b, MOQ_VERSION_DRAFT_07).unwrap();
+        assert_eq!(b.cap(), 0);
+        assert!(matches!(cm, ControlMessage::ServerSetup(..)));
+        println!("{:?}", cm);
     }
 }

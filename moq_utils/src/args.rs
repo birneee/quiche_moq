@@ -1,5 +1,6 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
+use quiche_moq::wire::{Version, MOQ_VERSION_DRAFT_07, MOQ_VERSION_DRAFT_13};
 
 #[derive(Parser)]
 pub(crate) struct Args {
@@ -39,4 +40,25 @@ pub(crate) struct SubscribeArgs {
     /// "-" can be used for stdout.
     #[arg(long, short = 'o')]
     pub(crate) output: Option<PathBuf>,
+    #[arg(long, value_enum, default_value_t=SetupVersion::Draft13)]
+    pub(crate) setup_version: SetupVersion,
+    /// Add separator between objects in output
+    /// e.g. "\n"
+    #[arg(long, default_value="")]
+    pub(crate) separator: String,
+}
+
+#[derive(Parser, Copy, Clone, clap::ValueEnum)]
+pub(crate) enum SetupVersion {
+    Draft07,
+    Draft13,
+}
+
+impl Into<Version> for SetupVersion {
+    fn into(self) -> Version {
+        match self {
+            SetupVersion::Draft07 => MOQ_VERSION_DRAFT_07,
+            SetupVersion::Draft13 => MOQ_VERSION_DRAFT_13,
+        }
+    }
 }

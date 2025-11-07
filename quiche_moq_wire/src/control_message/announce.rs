@@ -1,7 +1,8 @@
 use crate::bytes::FromBytes;
 use crate::error::Result;
-use crate::{Parameters, RequestId, Version, ANNOUNCE_CONTROL_MESSAGE_ID, MOQ_VERSION_DRAFT_07, MOQ_VERSION_DRAFT_10, MOQ_VERSION_DRAFT_11, MOQ_VERSION_DRAFT_13};
-use octets::Octets;
+use crate::{Parameters, RequestId, ToBytes, Version, ANNOUNCE_CONTROL_MESSAGE_ID, MOQ_VERSION_DRAFT_07, MOQ_VERSION_DRAFT_10, MOQ_VERSION_DRAFT_11, MOQ_VERSION_DRAFT_13};
+use octets::{Octets, OctetsMut};
+use crate::control_message::encode_control_message;
 use crate::control_message::header::ControlMessageHeader;
 use crate::namespace::Namespace;
 
@@ -14,6 +15,14 @@ pub struct AnnounceMessage {
 }
 
 impl AnnounceMessage {
+    pub fn new(request_id: Option<RequestId>, track_namespace: Namespace, parameters: Parameters) -> Self {
+        Self {
+            request_id,
+            track_namespace,
+            parameters,
+        }
+    }
+
     /// Some for DRAFT 11 to 13
     pub fn request_id(&self) -> Option<RequestId> { self.request_id }
 }
@@ -42,6 +51,23 @@ impl FromBytes for AnnounceMessage {
     }
 }
 
+impl ToBytes for AnnounceMessage {
+    fn to_bytes(&self, b: &mut OctetsMut, version: Version) -> Result<()> {
+        encode_control_message(ANNOUNCE_CONTROL_MESSAGE_ID, version, b, |b| {
+            match version {
+                MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_10 => {},
+                MOQ_VERSION_DRAFT_11..=MOQ_VERSION_DRAFT_13 => {
+                    b.put_varint(self.request_id.unwrap())?;
+                }
+                _ => unimplemented!()
+            }
+            self.track_namespace.to_bytes(b, version)?;
+            self.parameters.to_bytes(b, version)?;
+            Ok(())
+        })
+    }
+}
+
 #[cfg(test)]
 mod test {
     use crate::bytes::FromBytes;
@@ -52,6 +78,16 @@ mod test {
     #[test]
     fn decode_announce_draft7() {
         let msg: &[u8] = &[0x6, 0x14, 0xc, 0x4, 0x1d, 0x1, 0x11, 0x75, 0x6e, 0x65, 0x78, 0x70, 0x65, 0x63, 0x74, 0x65, 0x64, 0x2d, 0x6d, 0x69, 0x6e, 0x6e, 0x6f, 0x77, 0x0];
+
+        let mut o = Octets::with_slice(&msg);
+        let cm = ControlMessage::from_bytes(&mut o, MOQ_VERSION_DRAFT_07).unwrap();
+        println!("{:?}", cm);
+        todo!()
+    }
+
+    #[test]
+    fn decode_unknown_draft7() {
+        let msg: &[u8] = &[0xe, 0x1, 0xc, 0x66, 0x72, 0x61, 0x6e, 0x74, 0x69, 0x63, 0x2d, 0x77, 0x6f, 0x6c, 0x66];
 
         let mut o = Octets::with_slice(&msg);
         let cm = ControlMessage::from_bytes(&mut o, MOQ_VERSION_DRAFT_07).unwrap();

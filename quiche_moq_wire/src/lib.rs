@@ -23,6 +23,8 @@ pub use parameters::Parameters;
 pub use reason_phrase::ReasonPhrase;
 pub use setup_parameters::SetupParameters;
 pub use role::Role;
+pub use namespace::Namespace;
+pub use tuple::Tuple;
 
 pub type RequestId = u64;
 pub type Version = u64;
@@ -36,6 +38,7 @@ pub const MOQ_VERSION_DRAFT_10: u64 = 0xff00000A;
 pub const MOQ_VERSION_DRAFT_11: u64 = 0xff00000B;
 pub const MOQ_VERSION_DRAFT_12: u64 = 0xff00000C;
 pub const MOQ_VERSION_DRAFT_13: u64 = 0xff00000D;
+pub const MOQ_VERSION_LITE_01_BY_KIXELATED: u64 = 0xff0dad01;
 
 // https://www.ietf.org/archive/id/draft-ietf-moq-transport-13.html#name-control-messages
 
@@ -46,6 +49,7 @@ pub const SUBSCRIBE_OK_CONTROL_MESSAGE_ID: u64 = 0x4;
 pub const SUBSCRIBE_ERROR_CONTROL_MESSAGE_ID: u64 = 0x5;
 pub const ANNOUNCE_CONTROL_MESSAGE_ID: u64 = 0x6;
 pub const ANNOUNCE_OK_CONTROL_MESSAGE_ID: u64 = 0x7;
+pub const TRACK_STATUS_CONTROL_MESSAGE_ID: u64 = 0xE;
 pub const UNSUBSCRIBE_NAMESPACE_MESSAGE_ID: u64 = 0x14;
 pub const REQUEST_BLOCKED_CONTROL_MESSAGE_ID: u64 = 0x1A;
 pub const SUBSCRIBE_DONE_CONTROL_MESSAGE_ID: u64 = 0xB;

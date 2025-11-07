@@ -20,7 +20,7 @@ pub fn _init_moq_pipe(config: Config) -> (
         &mut c_h3,
         &mut pipe.client,
         &mut c_wt,
-        config,
+        config.clone(),
     );
 
     pipe.advance().unwrap();
@@ -28,7 +28,7 @@ pub fn _init_moq_pipe(config: Config) -> (
     assert!(matches!(s_h3.poll(&mut pipe.server), Err(h3::Error::Done)));
     s_wt.poll(&mut s_h3, &mut pipe.server);
     let session_id = *s_wt.readable_sessions().first().unwrap();
-    let mut s_moq = MoqTransportSession::accept(session_id.into(), config);
+    let mut s_moq = MoqTransportSession::accept(session_id.into(), config.clone());
     s_moq.poll(&mut pipe.server, &mut s_h3, &mut s_wt);
     assert!(s_moq.initialized());
 

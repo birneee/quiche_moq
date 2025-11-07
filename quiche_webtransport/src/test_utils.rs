@@ -97,14 +97,14 @@ pub fn _init_webtransport_pipe() -> (
     assert!(matches!(s_h3.poll(&mut pipe.server), Err(h3::Error::Done)));
     assert!(crate::webtransport_enabled_by_server(&c_h3));
 
-    let mut c_wt = crate::Connection::new();
+    let mut c_wt = crate::Connection::new(false);
     let wt_session_id = c_wt.connect_session(
         &mut c_h3,
         &mut pipe.client,
         "https://example.org/".parse().unwrap(),
     );
 
-    let mut s_wt = crate::Connection::new();
+    let mut s_wt = crate::Connection::new(true);
 
     pipe.advance().unwrap();
 

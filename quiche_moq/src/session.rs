@@ -13,8 +13,8 @@ use quiche_webtransport as wt;
 use short_buf::ShortBuf;
 use smallvec::SmallVec;
 use std::collections::HashMap;
-use quiche_moq_wire::{FromBytes, Parameters, RequestId, Role, SetupParameters, ToBytes, TrackAlias, Version, DEFAULT_MAX_REQUEST_ID_SETUP_PARAMETER, MOQ_VERSION_DRAFT_07, MOQ_VERSION_DRAFT_11, MOQ_VERSION_DRAFT_12, MOQ_VERSION_DRAFT_13, RESET_STREAM_CODE_DELIVERY_TIMEOUT};
-use quiche_moq_wire::control_message::{AnnounceOkMessage, ClientSetupMessage, ControlMessage, ServerSetupMessage, SubscribeErrorMessage, SubscribeOkMessage};
+use quiche_moq_wire::{FromBytes, Namespace, Parameters, RequestId, Role, SetupParameters, ToBytes, TrackAlias, Tuple, Version, DEFAULT_MAX_REQUEST_ID_SETUP_PARAMETER, MOQ_VERSION_DRAFT_07, MOQ_VERSION_DRAFT_11, MOQ_VERSION_DRAFT_12, MOQ_VERSION_DRAFT_13, RESET_STREAM_CODE_DELIVERY_TIMEOUT};
+use quiche_moq_wire::control_message::{AnnounceMessage, AnnounceOkMessage, ClientSetupMessage, ControlMessage, ServerSetupMessage, SubscribeErrorMessage, SubscribeOkMessage};
 use quiche_moq_wire::control_message::subscribe::{FilterType, SubscribeMessage};
 use quiche_moq_wire::object::ObjectHeader;
 use quiche_utils::stream_id::StreamID;
@@ -83,15 +83,13 @@ impl MoqTransportSession {
             pending_streams: HashMap::new(),
             pending_received_subscriptions: HashMap::new(),
             out_streams: HashMap::new(),
-            config,
+            config: config.clone(),
         };
         s.send_control_message(
             quich_conn,
             wt,
             &ControlMessage::ClientSetup(ClientSetupMessage {
-                supported_versions: vec![
-                    config.setup_version, // todo add config for supported versions
-                ],
+                supported_versions: config.supported_versions,
                 setup_parameters: SetupParameters {
                     path: None,
                     max_request_id: Some(100),
@@ -291,6 +289,9 @@ impl MoqTransportSession {
                     ControlMessage::Subscribe(cm) => {
                         self.pending_received_subscriptions
                             .insert(cm.request_id, cm);
+                    }
+                    ControlMessage::AnnounceOk(_cm) => {
+                        // todo relate to announce and make info available to application
                     }
                     _ => unimplemented!(),
                 }
@@ -572,5 +573,24 @@ impl MoqTransportSession {
 
     pub fn poll_subscribe_response(&mut self, request_id: RequestId) -> Option<core::result::Result<(TrackAlias, SubscribeOkMessage), SubscribeErrorMessage>> {
         self.pending_subscribe_responses.remove(&request_id)
+    }
+
+    pub fn announce(
+        &mut self,
+        conn: &mut quiche::Connection,
+        wt: &mut wt::Connection,
+        namespace: Vec<Vec<u8>>,
+    ) -> Result<()> {
+        self.send_control_message(
+            conn,
+            wt,
+            &ControlMessage::Announce(AnnounceMessage::new(
+                Some(0), //todo
+                Namespace(Tuple(namespace)),
+                Parameters(vec![]),
+            )),
+        );
+
+        Ok(())
     }
 }

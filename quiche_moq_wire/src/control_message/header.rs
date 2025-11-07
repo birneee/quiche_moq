@@ -3,21 +3,16 @@ use crate::{Version, MOQ_VERSION_DRAFT_07, MOQ_VERSION_DRAFT_10, MOQ_VERSION_DRA
 use octets::{Octets, OctetsMut};
 
 pub(crate) struct ControlMessageHeader {
-    pub(crate) ty: u64,
-    pub(crate) len: usize,
+    ty: u64,
+    len: usize,
 }
 
 impl ControlMessageHeader {
-    pub(crate) fn new(ty: u64, len: usize) -> Self {
-        Self {
-            ty,
-            len,
-        }
-    }
-
     pub(crate) fn ty(&self) -> u64 {
         self.ty
     }
+
+    pub(crate) fn len(&self) -> usize { self.len }
 
     pub fn payload_length(&self) -> usize {
         self.len
