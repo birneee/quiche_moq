@@ -1003,6 +1003,7 @@ dependencies = [
  "quiche_webtransport",
  "short_buf",
  "smallvec 2.0.0-alpha.11",
+ "url",
 ]
 
 [[package]]

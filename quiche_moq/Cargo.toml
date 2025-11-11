@@ -12,6 +12,7 @@ short_buf = { workspace = true }
 log = { workspace = true }
 smallvec = { workspace = true }
 quiche_utils = { workspace = true }
+url = "2.5.7"
 
 [dev-dependencies]
 quiche = { workspace = true, features = ["internal"]}
