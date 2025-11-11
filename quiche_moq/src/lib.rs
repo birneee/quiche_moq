@@ -9,7 +9,6 @@ mod pending_subscribe;
 mod session;
 mod config;
 pub mod test_utils;
-pub mod client_helper;
 
 //reexport dependency
 pub use quiche_moq_wire as wire;

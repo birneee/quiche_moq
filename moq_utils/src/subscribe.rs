@@ -15,10 +15,10 @@ use std::fs;
 use std::fs::File;
 use std::io::Write;
 use url::Url;
-use quiche_moq::client_helper::{ClientHelper, State};
+use quiche_moq_webtransport_helper::{MoqWebTransportHelper, State};
 
 struct ConnAppData {
-    client_helper: ClientHelper,
+    client_helper: MoqWebTransportHelper,
     args: SubscribeArgs,
     moq_request_id: Option<RequestId>,
     track_alias: Option<TrackAlias>,
@@ -74,14 +74,18 @@ pub(crate) fn run_subscribe(args: &SubscribeArgs) {
             let mut c = quiche::Config::new(PROTOCOL_VERSION).unwrap();
             c.verify_peer(false);
             c.set_application_protos(&[ALPN_HTTP_3]).unwrap();
-            ClientHelper::configure_quic(&mut c);
+            MoqWebTransportHelper::configure_quic(&mut c);
             if keylog.is_some() {
                 c.log_keys()
             }
             c
         },
         ConnAppData {
-            client_helper: ClientHelper::new(url, args.setup_version.into()),
+            client_helper: MoqWebTransportHelper::new_client(url, {
+                let mut c = moq::Config::default();
+                c.setup_version = args.setup_version.into();
+                c
+            }),
             args: args.clone(),
             moq_request_id: None,
             track_alias: None,

@@ -8,5 +8,4 @@ log = { workspace = true }
 env_logger = { workspace = true }
 quiche_mio_runner = { workspace = true }
 quiche_moq = { workspace = true }
-quiche_webtransport = { workspace = true }
-quiche_h3_utils = { workspace = true }
+quiche_moq_webtransport_helper = { workspace = true }

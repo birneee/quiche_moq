@@ -755,6 +755,7 @@ dependencies = [
  "log",
  "quiche_mio_runner",
  "quiche_moq",
+ "quiche_moq_webtransport_helper",
  "quiche_webtransport",
  "url",
 ]
@@ -1003,6 +1004,17 @@ dependencies = [
  "quiche_webtransport",
  "short_buf",
  "smallvec 2.0.0-alpha.11",
+]
+
+[[package]]
+name = "quiche_moq_webtransport_helper"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "quiche",
+ "quiche_h3_utils",
+ "quiche_moq",
+ "quiche_webtransport",
  "url",
 ]
 
@@ -1297,10 +1309,9 @@ version = "0.1.0"
 dependencies = [
  "env_logger",
  "log",
- "quiche_h3_utils",
  "quiche_mio_runner",
  "quiche_moq",
- "quiche_webtransport",
+ "quiche_moq_webtransport_helper",
 ]
 
 [[package]]
@@ -1317,11 +1328,10 @@ dependencies = [
  "chrono",
  "env_logger",
  "log",
- "quiche_h3_utils",
  "quiche_mio_runner",
  "quiche_moq",
+ "quiche_moq_webtransport_helper",
  "quiche_utils",
- "quiche_webtransport",
 ]
 
 [[package]]
@@ -1376,10 +1386,9 @@ version = "0.1.0"
 dependencies = [
  "env_logger",
  "log",
- "quiche_h3_utils",
  "quiche_mio_runner",
  "quiche_moq",
- "quiche_webtransport",
+ "quiche_moq_webtransport_helper",
 ]
 
 [[package]]

@@ -263,4 +263,8 @@ impl Connection {
         let stream = self.streams.get_mut(&stream_id).unwrap();
         stream.send_if_capacity(quic, buf, fin)
     }
+    
+    pub fn session_ids(&self) -> Vec<u64> {
+        self.sessions.keys().cloned().collect()
+    }
 }
