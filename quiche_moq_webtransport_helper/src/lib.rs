@@ -83,6 +83,9 @@ impl MoqWebTransportHelper {
                                         );
                                         wt_conn.recv_hdrs(stream_id, &list);
                                     }
+                                    Ok((_stream_id, h3::Event::Data { .. })) => {
+                                        debug!("ignoring h3 data");
+                                    }
                                     Ok(e) => unimplemented!("{:?}", e),
                                     Err(h3::Error::Done) => break 'h3,
                                     Err(e) => unimplemented!("{:?}", e),

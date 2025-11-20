@@ -92,33 +92,6 @@ impl<const N: usize> ShortBuf<N> {
     /// Copy the bytes from the buffer to the `dst`.
     /// If the buffer is empty copy bytes directly from `func`.
     /// Read bytes are removed from the buffer.
-    /// If `func` returns an error no buffer bytes are removed, however some bytes might be already copied to `dst`.
-    #[deprecated]
-    pub fn chain_read<E, F: FnOnce(&mut [u8]) -> Result<usize, E>>(
-        &mut self,
-        func: F,
-        dst: &mut [u8],
-    ) -> Result<usize, E> {
-        match self.is_empty() {
-            true => func(dst),
-            false => match dst.len() <= self.len() {
-                true => {
-                    let len = dst.len();
-                    dst.copy_from_slice(&self.buf[self.offset..self.offset + len]);
-                    self.offset += len;
-                    Ok(len)
-                }
-                false => {
-                    let extra_len = self.len();
-                    dst[..extra_len].copy_from_slice(self.buffer());
-                    let len = func(&mut dst[extra_len..])?;
-                    self.offset += extra_len;
-                    Ok(len + extra_len)
-                }
-            },
-        }
-    }
-
     pub fn chain_read2<E, F: FnOnce(&mut [u8]) -> Result<usize, E>>(
         &mut self,
         func: F,
@@ -158,9 +131,9 @@ mod test {
         let mut inner = Cursor::new(data);
         let mut sb = ShortBuf::<0>::new();
         let mut read = [0u8; 5];
-        let len = sb.chain_read(|b| inner.read(b), &mut read).unwrap();
+        let len = sb.chain_read2(|b| inner.read(b), &mut read).unwrap();
         assert_eq!(read[..len], data);
-        let len = sb.chain_read(|b| inner.read(b), &mut read).unwrap();
+        let len = sb.chain_read2(|b| inner.read(b), &mut read).unwrap();
         assert_eq!(len, 0);
     }
 
@@ -172,9 +145,9 @@ mod test {
         sb.fill(|b| inner.read(b)).unwrap();
         assert_eq!(sb.buffer(), data);
         let mut read = [0u8; 5];
-        let len = sb.chain_read(|b| inner.read(b), &mut read).unwrap();
+        let len = sb.chain_read2(|b| inner.read(b), &mut read).unwrap();
         assert_eq!(read[..len], data);
-        let len = sb.chain_read(|b| inner.read(b), &mut read).unwrap();
+        let len = sb.chain_read2(|b| inner.read(b), &mut read).unwrap();
         assert_eq!(len, 0);
     }
 
@@ -186,9 +159,12 @@ mod test {
         sb.fill(|b| inner.read(b)).unwrap();
         assert_eq!(sb.buffer(), &data[..2]);
         let mut read = [0u8; 5];
-        let len = sb.chain_read(|b| inner.read(b), &mut read).unwrap();
-        assert_eq!(read[..len], data);
-        let len = sb.chain_read(|b| inner.read(b), &mut read).unwrap();
+        let len = sb.chain_read2(|b| inner.read(b), &mut read).unwrap();
+        assert_eq!(len, 2);
+        let len = sb.chain_read2(|b| inner.read(b), &mut read[2..]).unwrap();
+        assert_eq!(len, 1);
+        assert_eq!(read[..3], data);
+        let len = sb.chain_read2(|b| inner.read(b), &mut read).unwrap();
         assert_eq!(len, 0);
     }
 
@@ -212,7 +188,7 @@ mod test {
         assert_eq!(sb.buffer(), &data);
         sb.consume(3);
         let mut read = [0u8; 5];
-        let len = sb.chain_read(|b| inner.read(b), &mut read).unwrap();
+        let len = sb.chain_read2(|b| inner.read(b), &mut read).unwrap();
         assert_eq!(len, 0);
     }
 }

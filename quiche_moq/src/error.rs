@@ -4,7 +4,6 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug)]
 pub enum Error {
-    ProtocolViolation(String),
     Octets(octets::BufferTooShortError),
     PartialControlMessage,
     FromUtf8Error(std::string::FromUtf8Error),

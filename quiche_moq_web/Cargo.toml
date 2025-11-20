@@ -1,0 +1,34 @@
+[package]
+name = "quiche_moq_web"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wasm-bindgen = { version = "0.2.105", features = [] }
+wasm-bindgen-futures = "0.4.55"
+log = "0.4.28"
+console_log = "1.0.0"
+quiche_moq_wire = { workspace = true }
+octets = { workspace = true }
+
+[dependencies.web-sys]
+version = "0.3.82"
+features = [
+    "console",
+    "HtmlButtonElement",
+    "HtmlVideoElement",
+    "Window",
+    "Document",
+    "WebTransport",
+    "WebTransportOptions",
+    "WebTransportBidirectionalStream",
+    "WebTransportSendStream",
+    "WritableStream",
+    "WritableStreamDefaultWriter",
+    "WebTransportReceiveStream",
+    "ReadableStream",
+    "ReadableStreamDefaultReader",
+]

@@ -11,3 +11,4 @@ log = { workspace = true }
 url = { workspace = true }
 boring = { workspace = true }
 quiche_h3_utils = { workspace = true }
+http_capsule = { workspace = true }

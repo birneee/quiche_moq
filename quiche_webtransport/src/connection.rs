@@ -3,12 +3,14 @@ use crate::pending_request::PendingRequest;
 use crate::pending_response::PendingResponse;
 use crate::session::Session;
 use crate::stream::Stream;
-use crate::{Error, SessionId, PROTOCOL_HEADER_WEBTRANSPORT};
+use crate::{Error, SessionId, PROTOCOL_HEADER_WEBTRANSPORT, WT_CLOSE_SESSION};
 use log::{debug, trace};
 use quiche::h3;
 use quiche::h3::NameValue;
 use std::collections::HashMap;
+use octets::OctetsMut;
 use url::Url;
+use http_capsule::Capsule;
 use quiche_h3_utils::{hdrs_to_strings, METHOD_CONNECT};
 
 /// A Webtransport connections manages the state of one HTTP connection.
@@ -266,5 +268,22 @@ impl Connection {
     
     pub fn session_ids(&self) -> Vec<u64> {
         self.sessions.keys().cloned().collect()
+    }
+
+    pub fn close_session(&mut self, session_id: SessionId, error_code: u32, error_msg: &str, quic: &mut quiche::Connection, h3: &mut h3::Connection) -> Result<()> {
+        let _session = self.sessions.remove(&session_id).unwrap();
+        let mut buf = [0u8; 1024];
+        let value = {
+            let mut o = OctetsMut::with_slice(&mut buf);
+            o.put_u32(error_code)?;
+            o.put_bytes(error_msg.as_bytes())?;
+            let len = o.off();
+            buf[..len].to_vec()
+        };
+        let capsule = Capsule::new(WT_CLOSE_SESSION, value);
+        let len = capsule.encode(&mut buf)?;
+        let sent = h3.send_body(quic, session_id, &buf[..len], false).unwrap();
+        assert_eq!(sent, len);
+        Ok(())
     }
 }

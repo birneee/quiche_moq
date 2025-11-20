@@ -13,7 +13,7 @@ use quiche_webtransport as wt;
 use short_buf::ShortBuf;
 use smallvec::SmallVec;
 use std::collections::HashMap;
-use quiche_moq_wire::{FromBytes, Namespace, Parameters, RequestId, Role, SetupParameters, ToBytes, TrackAlias, Tuple, Version, DEFAULT_MAX_REQUEST_ID_SETUP_PARAMETER, MOQ_VERSION_DRAFT_07, MOQ_VERSION_DRAFT_11, MOQ_VERSION_DRAFT_12, MOQ_VERSION_DRAFT_13, RESET_STREAM_CODE_DELIVERY_TIMEOUT};
+use quiche_moq_wire::{FromBytes, Namespace, Parameters, RequestId, Role, SetupParameters, ToBytes, TrackAlias, Tuple, Version, DEFAULT_MAX_REQUEST_ID_SETUP_PARAMETER, MOQ_VERSION_DRAFT_07, MOQ_VERSION_DRAFT_11, MOQ_VERSION_DRAFT_12, MOQ_VERSION_DRAFT_13, PROTOCOL_VIOLATION, RESET_STREAM_CODE_DELIVERY_TIMEOUT};
 use quiche_moq_wire::control_message::{AnnounceMessage, AnnounceOkMessage, ClientSetupMessage, ControlMessage, ServerSetupMessage, SubscribeErrorMessage, SubscribeOkMessage};
 use quiche_moq_wire::control_message::subscribe::{FilterType, SubscribeMessage};
 use quiche_moq_wire::object::ObjectHeader;
@@ -47,6 +47,7 @@ pub struct MoqTransportSession {
     pending_received_subscriptions: HashMap<RequestId, SubscribeMessage>,
     pub(crate) out_streams: HashMap<StreamID, OutStream>,
     config: Config,
+    closed: bool,
 }
 
 impl MoqTransportSession {
@@ -84,6 +85,7 @@ impl MoqTransportSession {
             pending_received_subscriptions: HashMap::new(),
             out_streams: HashMap::new(),
             config: config.clone(),
+            closed: false,
         };
         s.send_control_message(
             quich_conn,
@@ -122,6 +124,7 @@ impl MoqTransportSession {
             pending_received_subscriptions: HashMap::new(),
             out_streams: HashMap::new(),
             config,
+            closed: false,
         }
     }
 
@@ -195,6 +198,11 @@ impl MoqTransportSession {
         wt: &mut quiche_webtransport::Connection,
     ) {
         trace!("poll moq");
+
+        if self.closed {
+            return;
+        }
+
         let control_stream_id = if let Some(id) = self.control_stream_id {
             id
         } else {
@@ -219,6 +227,11 @@ impl MoqTransportSession {
                         continue;
                     }
                     Err(Error::WT(quiche_webtransport::Error::Done)) => continue,
+                    Err(Error::Wire(quiche_moq_wire::Error::ProtocolViolation(_))) => {
+                        wt.close_session(self.webtransport_session_id.into_u64(), PROTOCOL_VIOLATION, "", quic, h3).unwrap();
+                        self.closed = true;
+                        return
+                    },
                     Err(e) => unimplemented!("{:?}", e),
                 };
                 match cm {

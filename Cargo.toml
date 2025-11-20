@@ -1,9 +1,13 @@
 [workspace]
 members = [
+    "http_capsule",
     "moq_utils",
     "quiche_h3_utils",
     "quiche_moq",
-    "quiche_moq/examples/*", "quiche_moq_webtransport_helper", "quiche_moq_wire",
+    "quiche_moq/examples/*",
+    "quiche_moq_web",
+    "quiche_moq_webtransport_helper",
+    "quiche_moq_wire",
     "quiche_utils",
     "quiche_webtransport",
     "short_buf",
@@ -32,6 +36,7 @@ short_buf = { path = "short_buf" }
 smallvec = "2.0.0-alpha.11"
 url = "2.5.7"
 quiche_moq_webtransport_helper = { path="quiche_moq_webtransport_helper" }
+http_capsule = { path = "http_capsule" }
 
 [patch.crates-io]
 quiche = { git="https://github.com/birneee/quiche", branch = "webtransport_streams" }

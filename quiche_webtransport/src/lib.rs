@@ -9,7 +9,7 @@ pub mod test_utils;
 pub use crate::connection::Connection;
 pub use crate::error::Error;
 
-type SessionId = u64;
+pub type SessionId = u64;
 
 /// https://www.ietf.org/archive/id/draft-ietf-webtrans-http3-02.html#name-unidirectional-streams
 pub const WEBTRANSPORT_UNI_STREAM_TYPE_ID: u64 = 0x54;
@@ -38,6 +38,10 @@ pub const WEBTRANSPORT_MAX_SESSIONS_SETTINGS_PARAMETER_ID_DRAFT_7_12: u64 = 0xc6
 /// https://www.ietf.org/archive/id/draft-ietf-webtrans-http3-13.html#name-http-3-settings-parameter-r
 /// from draft 13
 pub const WT_MAX_SESSIONS_H3_SETTINGS_PARAMETER_ID: u64 = 0x14e9cd29;
+
+
+/// https://www.ietf.org/archive/id/draft-ietf-webtrans-http3-14.html#name-capsule-types
+pub const WT_CLOSE_SESSION: u64 = 0x2843;
 
 /// Configure H3 for WebTransport.
 pub fn configure_h3(c: &mut quiche::h3::Config) -> Result<(), quiche::h3::Error> {

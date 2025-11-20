@@ -9,3 +9,9 @@ pub enum Error {
     InsufficientCapacity,
     Fin,
 }
+
+impl From<octets::BufferTooShortError> for Error {
+    fn from(_: octets::BufferTooShortError) -> Self {
+        Error::InsufficientCapacity
+    }
+}
