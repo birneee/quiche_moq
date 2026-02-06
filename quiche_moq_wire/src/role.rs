@@ -33,7 +33,7 @@ impl Role {
 impl FromBytes for Role {
     fn from_bytes(b: &mut Octets, version: Version) -> Result<Self> {
         assert_eq!(version, MOQ_VERSION_DRAFT_07);
-        Ok(Self::from_id(b.get_varint()?)?)
+        Self::from_id(b.get_varint()?)
     }
 }
 

@@ -13,7 +13,14 @@ pub struct ShortBuf<const N: usize> {
     end: usize,
 }
 
+impl<const N: usize> Default for ShortBuf<N> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<const N: usize> ShortBuf<N> {
+    #[allow(clippy::uninit_assumed_init)]
     pub fn new() -> Self {
         Self {
             buf: unsafe { mem::MaybeUninit::uninit().assume_init() },

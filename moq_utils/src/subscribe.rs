@@ -30,25 +30,22 @@ struct ConnAppData {
 type Endpoint = quiche_endpoint::Endpoint<ConnAppData, ()>;
 type Runner = runner::Runner<ConnAppData, (), ()>;
 
+#[allow(clippy::field_reassign_with_default)]
 pub(crate) fn run_subscribe(args: &SubscribeArgs) {
     let mut endpoint = Endpoint::new(
         None,
-        {
-            let c = EndpointConfig::default();
-            c
-        },
+        EndpointConfig::default(),
         (),
     );
 
     let socket = Socket::bind("0.0.0.0:0".parse().unwrap(), false, false, false).unwrap();
 
     let url = Url::parse(&args.url).unwrap();
-    let peer_addr = url
+    let peer_addr = *url
         .socket_addrs(|| Some(443))
         .unwrap()
         .first()
-        .unwrap()
-        .clone();
+        .unwrap();
 
     let keylog = args.ssl_key_log_file.as_ref().map(|p| {
         fs::OpenOptions::new()
@@ -60,7 +57,7 @@ pub(crate) fn run_subscribe(args: &SubscribeArgs) {
 
     let output = match &args.output {
         Some(o) if o.to_str().unwrap() == "-" => Some(File::create("/dev/stdout").unwrap()),
-        Some(o) => Some(File::create(&o).unwrap()),
+        Some(o) => Some(File::create(o).unwrap()),
         None => None,
     };
 

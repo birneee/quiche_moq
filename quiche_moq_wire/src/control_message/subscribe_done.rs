@@ -1,6 +1,7 @@
 use crate::{ReasonPhrase, Version};
 use octets::Octets;
 
+#[allow(unused)]
 #[derive(Debug)]
 pub struct SubscribeDoneMessage {
     request_id: u64,

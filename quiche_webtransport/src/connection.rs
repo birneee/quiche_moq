@@ -118,7 +118,7 @@ impl Connection {
                     false,
                 )
                     .unwrap();
-                return false;
+                false
             });
         }
     }
@@ -126,7 +126,7 @@ impl Connection {
     /// return readable sessions ids
     pub fn readable_sessions(&self) -> Vec<u64> {
         let mut readable = vec![];
-        for (_, stream) in &self.streams {
+        for stream in self.streams.values() {
             if let Some(session_id) = stream.session_id {
                 readable.push(session_id);
             }

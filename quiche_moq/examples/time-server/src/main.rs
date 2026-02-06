@@ -40,6 +40,7 @@ impl Default for AppData {
 type Endpoint = quiche_endpoint::Endpoint<ConnAppData, AppData>;
 type Runner = runner::Runner<ConnAppData, AppData, ()>;
 
+#[allow(clippy::field_reassign_with_default)]
 fn main() {
     env_logger::builder().format_timestamp_nanos().init();
     let endpoint = Endpoint::new(
@@ -58,10 +59,7 @@ fn main() {
             };
             c
         }),
-        {
-            let c = EndpointConfig::default();
-            c
-        },
+        EndpointConfig::default(),
         AppData::default(),
     );
 
@@ -88,7 +86,7 @@ fn post_handle_recvs(runner: &mut Runner) {
     let next_object_instant = &mut runner.endpoint.app_data_mut().next_object_instant;
     // date_time_str in None when no object should be sent now
     let date_time_str = if *next_object_instant <= now {
-        *next_object_instant = *next_object_instant + Duration::from_secs(1);
+        *next_object_instant += Duration::from_secs(1);
         let str = Local::now().to_rfc3339();
         trace!("new date: {}", str);
         Some(str)
@@ -128,6 +126,7 @@ fn post_handle_recvs(runner: &mut Runner) {
                 }
             }
         }
+        #[allow(clippy::never_loop)]
         for _ in moq_session.readable() {
             unimplemented!()
         }

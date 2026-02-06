@@ -46,7 +46,7 @@ impl FromBytes for SetupParameters {
                     s.path = Some(v.clone())
                 }
                 (ROLE_SETUP_PARAMETER_ID, ParameterValue::Bytes(v), MOQ_VERSION_DRAFT_07) => {
-                    s.role = Some(Role::from_bytes(&mut Octets::with_slice(&v), version)?);
+                    s.role = Some(Role::from_bytes(&mut Octets::with_slice(v), version)?);
                 }
                 _ => { // unknown
                     s.extra_parameters.push(p);

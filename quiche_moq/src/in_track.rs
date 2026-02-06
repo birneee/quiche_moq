@@ -39,6 +39,6 @@ impl InTrack {
     }
 
     pub(crate) fn current_stream(&self) -> Option<StreamID> {
-        self.readable_streams.first().map(|s| *s)
+        self.readable_streams.first().copied()
     }
 }

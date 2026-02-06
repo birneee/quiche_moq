@@ -17,9 +17,9 @@ impl StreamID {
     }
 }
 
-impl Into<u64> for StreamID {
-    fn into(self) -> u64 {
-        self.0
+impl From<StreamID> for u64 {
+    fn from(value: StreamID) -> Self {
+        value.0
     }
 }
 

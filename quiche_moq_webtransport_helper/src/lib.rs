@@ -1,10 +1,9 @@
-use quiche;
 use quiche::h3;
 use quiche_moq as moq;
 use quiche_moq::MoqTransportSession;
 use quiche_webtransport as wt;
 use std::mem;
-use log::debug;
+use log::{debug, error};
 use url::Url;
 use quiche_h3_utils::ALPN_HTTP_3;
 
@@ -59,7 +58,7 @@ impl MoqWebTransportHelper {
                     match &mut self.perspective {
                         Perspective::Client { url } => {
                             Self::h3_poll_expect_nothing(h3_conn, quic_conn);
-                            if !wt::webtransport_enabled_by_server(&h3_conn) {
+                            if !wt::webtransport_enabled_by_server(h3_conn) {
                                 break 'conn; // not ready for wt
                             }
                             let moq_session_id =
@@ -83,7 +82,7 @@ impl MoqWebTransportHelper {
                                         );
                                         wt_conn.recv_hdrs(stream_id, &list);
                                     }
-                                    Ok((_stream_id, h3::Event::Data { .. })) => {
+                                    Ok((_stream_id, h3::Event::Data)) => {
                                         debug!("ignoring h3 data");
                                     }
                                     Ok(e) => unimplemented!("{:?}", e),
@@ -160,10 +159,10 @@ impl MoqWebTransportHelper {
     fn h3_poll_expect_nothing(h3_conn: &mut h3::Connection, quic_conn: &mut quiche::Connection) {
         'h3: loop {
             match h3_conn.poll(quic_conn) {
-                Ok((_, h3::Event::Headers { .. })) => unreachable!("unexpected h3 response"),
-                Ok(e) => unimplemented!("{:?}", e),
-                Err(h3::Error::Done) => break 'h3,
-                Err(e) => unimplemented!("{:?}", e),
+                Ok((_, h3::Event::Headers { .. })) => error!("unexpected h3 response"),
+                Ok(e) => error!("{:?}", e),
+                Err(h3::Error::Done) => continue 'h3,
+                Err(e) => error!("{:?}", e),
             }
         }
     }
@@ -181,6 +180,7 @@ impl MoqWebTransportHelper {
     }
 }
 
+#[allow(clippy::large_enum_variant)]
 pub enum State {
     Quic,
     H3 {

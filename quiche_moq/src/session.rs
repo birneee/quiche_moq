@@ -70,7 +70,7 @@ impl MoqTransportSession {
         let s = Self {
             server: false,
             control_stream_id: Some(control_stream_id.into()),
-            webtransport_session_id: session_id.into(),
+            webtransport_session_id: session_id,
             ctrl_buf: ShortBuf::new(),
             selected_version: None,
             next_request_id: 1,

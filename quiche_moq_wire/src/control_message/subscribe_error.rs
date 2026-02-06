@@ -3,6 +3,7 @@ use crate::{ReasonPhrase, RequestId, TrackAlias, Version, MOQ_VERSION_DRAFT_07, 
 use octets::Octets;
 use crate::control_message::header::ControlMessageHeader;
 
+#[allow(unused)]
 #[derive(Debug)]
 pub struct SubscribeErrorMessage {
     /// formerly known as subscribe ID

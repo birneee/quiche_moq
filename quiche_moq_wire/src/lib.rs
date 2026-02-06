@@ -34,10 +34,10 @@ pub type SubgroupType = u64;
 pub const MOQ_VERSION_DRAFT_07: u64 = 0xff000007;
 pub const MOQ_VERSION_DRAFT_08: u64 = 0xff000008;
 pub const MOQ_VERSION_DRAFT_09: u64 = 0xff000009;
-pub const MOQ_VERSION_DRAFT_10: u64 = 0xff00000A;
-pub const MOQ_VERSION_DRAFT_11: u64 = 0xff00000B;
-pub const MOQ_VERSION_DRAFT_12: u64 = 0xff00000C;
-pub const MOQ_VERSION_DRAFT_13: u64 = 0xff00000D;
+pub const MOQ_VERSION_DRAFT_10: u64 = 0xff00000a;
+pub const MOQ_VERSION_DRAFT_11: u64 = 0xff00000b;
+pub const MOQ_VERSION_DRAFT_12: u64 = 0xff00000c;
+pub const MOQ_VERSION_DRAFT_13: u64 = 0xff00000d;
 pub const MOQ_VERSION_LITE_01_BY_KIXELATED: u64 = 0xff0dad01;
 
 // https://www.ietf.org/archive/id/draft-ietf-moq-transport-13.html#name-control-messages
@@ -100,10 +100,13 @@ const MAX_FULL_TRACK_NAME_LEN: usize = 4096;
 /// used from draft 7 to draft 10
 const STREAM_HEADER_SUBGROUP_STREAM_TYPE_ID: u64 = 0x4;
 
+#[allow(unused)]
 const FETCH_HEADER_SUBGROUP_STREAM_TYPE_ID: u64 = 0x5;
 
 /// used from draft 10 to draft 13
 const SUBGROUP_UNI_STREAM_TYPE_IDS: [u64; 6] = [0x8, 0x9, 0xA, 0xB, 0xC, 0xD];
+
+#[allow(unused)]
 /// https://www.ietf.org/archive/id/draft-ietf-moq-transport-13.html#name-data-streams-and-datagrams
 const FETCH_UNI_STREAM_TYPE_ID: u64 = 0x05;
 

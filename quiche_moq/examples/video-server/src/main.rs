@@ -49,6 +49,7 @@ struct AppData {
 type Endpoint = quiche_endpoint::Endpoint<ConnAppData, AppData>;
 type Runner = runner::Runner<ConnAppData, AppData, ()>;
 
+#[allow(clippy::field_reassign_with_default)]
 fn main() {
     env_logger::builder().format_timestamp_nanos().init();
 
@@ -114,10 +115,7 @@ fn main() {
             };
             c
         }),
-        {
-            let c = EndpointConfig::default();
-            c
-        },
+        EndpointConfig::default(),
         AppData {
             video_in,
             track: Mp4SharedTrackState::new(),
@@ -146,6 +144,7 @@ fn main() {
     runner.register_socket(socket);
 
     runner.run();
+    let _ = ffmpeg_child.wait();
 }
 
 fn post_handle_recvs(runner: &mut Runner) {

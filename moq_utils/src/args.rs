@@ -54,9 +54,9 @@ pub(crate) enum SetupVersion {
     Draft13,
 }
 
-impl Into<Version> for SetupVersion {
-    fn into(self) -> Version {
-        match self {
+impl From<SetupVersion> for Version {
+    fn from(val: SetupVersion) -> Self {
+        match val {
             SetupVersion::Draft07 => MOQ_VERSION_DRAFT_07,
             SetupVersion::Draft13 => MOQ_VERSION_DRAFT_13,
         }

@@ -22,16 +22,14 @@ struct AppData {
 type Endpoint = quiche_endpoint::Endpoint<ConnAppData, AppData>;
 type Runner = runner::Runner<ConnAppData, AppData, ()>;
 
+#[allow(clippy::field_reassign_with_default)]
 fn main() {
     let out = io::stdout();
 
     env_logger::builder().format_timestamp_nanos().init();
     let mut endpoint = Endpoint::new(
         None,
-        {
-            let c = EndpointConfig::default();
-            c
-        },
+        EndpointConfig::default(),
         AppData { out },
     );
 
@@ -87,17 +85,15 @@ fn post_handle_recvs(runner: &mut Runner) {
         } = &mut conn.app_data.moq_helper.state else {
             continue 'conn;
         };
-        if moq_session.initialized() {
-            if !conn.app_data.subscribed {
-                info!("subscribe clock second");
-                moq_session.subscribe(
-                    quic_conn,
-                    wt_conn,
-                    vec![Vec::from(b"testsrc")],
-                    Vec::from(b"mp4"),
-                ).unwrap();
-                conn.app_data.subscribed = true;
-            }
+        if moq_session.initialized() && !conn.app_data.subscribed {
+            info!("subscribe clock second");
+            moq_session.subscribe(
+                quic_conn,
+                wt_conn,
+                vec![Vec::from(b"testsrc")],
+                Vec::from(b"mp4"),
+            ).unwrap();
+            conn.app_data.subscribed = true;
         }
         'trackLoop: for track_alias in moq_session.readable() {
             loop {

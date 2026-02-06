@@ -3,6 +3,7 @@ use crate::{FromBytes, ToBytes, Version, TRACK_STATUS_CONTROL_MESSAGE_ID};
 use crate::control_message::header::ControlMessageHeader;
 use crate::namespace::Namespace;
 
+#[allow(unused)]
 #[derive(Debug)]
 pub struct TrackStatusMessage {
     track_namespace: Namespace,

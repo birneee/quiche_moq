@@ -3,7 +3,6 @@ use octets::{Octets, OctetsMut};
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
-use web_sys;
 use web_sys::{Document, HtmlVideoElement, ReadableStreamDefaultReader, WebTransport, WebTransportBidirectionalStream, Window};
 use web_sys::js_sys::{Object, Reflect, Uint8Array};
 use quiche_moq_wire::control_message::{ClientSetupMessage, ControlMessage};

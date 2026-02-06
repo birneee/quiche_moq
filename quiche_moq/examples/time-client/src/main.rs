@@ -16,14 +16,12 @@ struct ConnAppData {
 type Endpoint = quiche_endpoint::Endpoint<ConnAppData, ()>;
 type Runner = runner::Runner<ConnAppData, (), ()>;
 
+#[allow(clippy::field_reassign_with_default)]
 fn main() {
     env_logger::builder().format_timestamp_nanos().init();
     let mut endpoint = Endpoint::new(
         None,
-        {
-            let c = EndpointConfig::default();
-            c
-        },
+        EndpointConfig::default(),
         (),
     );
 
@@ -78,17 +76,15 @@ fn post_handle_recvs(runner: &mut Runner) {
         } = &mut conn.app_data.moq_helper.state else {
             continue 'conn;
         };
-        if moq_session.initialized() {
-            if !conn.app_data.subscribed {
-                info!("subscribe clock second");
-                moq_session.subscribe(
-                    quic_conn,
-                    wt_conn,
-                    vec![Vec::from(b"clock")],
-                    Vec::from(b"second"),
-                ).unwrap();
-                conn.app_data.subscribed = true;
-            }
+        if moq_session.initialized() && !conn.app_data.subscribed {
+            info!("subscribe clock second");
+            moq_session.subscribe(
+                quic_conn,
+                wt_conn,
+                vec![Vec::from(b"clock")],
+                Vec::from(b"second"),
+            ).unwrap();
+            conn.app_data.subscribed = true;
         }
         'trackLoop: for track_alias in &moq_session.readable() {
             loop {
@@ -112,7 +108,7 @@ fn post_handle_recvs(runner: &mut Runner) {
                 assert_eq!(n, hdr.payload_len());
                 let pld = &buf[..n];
                 debug!("moq obj {:?} {:?}", hdr, pld);
-                info!("received {:?}", String::from_utf8_lossy(&pld));
+                info!("received {:?}", String::from_utf8_lossy(pld));
             }
         }
     }

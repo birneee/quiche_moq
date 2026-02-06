@@ -26,25 +26,22 @@ struct ConnAppData {
 type Endpoint = quiche_endpoint::Endpoint<ConnAppData, ()>;
 type Runner = runner::Runner<ConnAppData, (), ()>;
 
+#[allow(clippy::field_reassign_with_default)]
 pub(crate) fn run_publish(args: &PublishArgs) {
     let mut endpoint = Endpoint::new(
         None,
-        {
-            let c = EndpointConfig::default();
-            c
-        },
+        EndpointConfig::default(),
         (),
     );
 
     let socket = Socket::bind("[::]:0".parse().unwrap(), false, false, false).unwrap();
 
     let url = Url::parse(&args.url).unwrap();
-    let peer_addr = url
+    let peer_addr = *url
         .socket_addrs(|| Some(443))
         .unwrap()
         .first()
-        .unwrap()
-        .clone();
+        .unwrap();
 
     let keylog = args.ssl_key_log_file.as_ref()
         .map(|p| fs::OpenOptions::new().create(true).append(true).open(p).unwrap());
@@ -103,6 +100,7 @@ pub(crate) fn run_publish(args: &PublishArgs) {
     runner.run();
 }
 
+#[allow(clippy::field_reassign_with_default)]
 fn post_handle_recvs(runner: &mut Runner) {
     for icid in &mut runner.endpoint.conn_index_iter() {
         let Some(conn) = runner.endpoint.conn_mut(icid) else { continue };
@@ -145,7 +143,7 @@ fn post_handle_recvs(runner: &mut Runner) {
         wt_conn.poll(h3_conn, quic_conn);
         let moq_session_id = match conn.app_data.moq_session_id {
             None => {
-                if !wt::webtransport_enabled_by_server(&h3_conn) {
+                if !wt::webtransport_enabled_by_server(h3_conn) {
                     continue; // not ready for wt
                 }
                 conn.app_data.moq_session_id = Some(wt_conn.connect_session(h3_conn, quic_conn, conn.app_data.url.clone()));

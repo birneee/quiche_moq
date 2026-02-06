@@ -42,7 +42,7 @@ impl FromBytes for AnnounceMessage {
         let track_namespace = Namespace::from_bytes(b, version)?;
         let parameters = Parameters::from_bytes(b, version)?;
         let payload_end = b.off();
-        assert_eq!(payload_end - payload_start, header.payload_length() as usize);
+        assert_eq!(payload_end - payload_start, header.payload_length());
         Ok(Self {
             request_id,
             track_namespace,
@@ -65,33 +65,5 @@ impl ToBytes for AnnounceMessage {
             self.parameters.to_bytes(b, version)?;
             Ok(())
         })
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use crate::bytes::FromBytes;
-    use crate::MOQ_VERSION_DRAFT_07;
-    use octets::Octets;
-    use crate::control_message::ControlMessage;
-
-    #[test]
-    fn decode_announce_draft7() {
-        let msg: &[u8] = &[0x6, 0x14, 0xc, 0x4, 0x1d, 0x1, 0x11, 0x75, 0x6e, 0x65, 0x78, 0x70, 0x65, 0x63, 0x74, 0x65, 0x64, 0x2d, 0x6d, 0x69, 0x6e, 0x6e, 0x6f, 0x77, 0x0];
-
-        let mut o = Octets::with_slice(&msg);
-        let cm = ControlMessage::from_bytes(&mut o, MOQ_VERSION_DRAFT_07).unwrap();
-        println!("{:?}", cm);
-        todo!()
-    }
-
-    #[test]
-    fn decode_unknown_draft7() {
-        let msg: &[u8] = &[0xe, 0x1, 0xc, 0x66, 0x72, 0x61, 0x6e, 0x74, 0x69, 0x63, 0x2d, 0x77, 0x6f, 0x6c, 0x66];
-
-        let mut o = Octets::with_slice(&msg);
-        let cm = ControlMessage::from_bytes(&mut o, MOQ_VERSION_DRAFT_07).unwrap();
-        println!("{:?}", cm);
-        todo!()
     }
 }

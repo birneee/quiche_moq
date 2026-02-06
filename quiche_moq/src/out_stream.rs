@@ -120,7 +120,7 @@ impl OutStream {
         buf: &[u8],
     ) -> Result<()> {
         self.send_obj_hdr(buf.len(), quic, wt)?;
-        let n = self.send_obj_pld(&buf, wt, quic).unwrap();
+        let n = self.send_obj_pld(buf, wt, quic).unwrap();
         assert_eq!(n, buf.len());
         Ok(())
     }

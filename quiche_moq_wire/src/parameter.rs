@@ -72,7 +72,7 @@ impl ToBytes for Parameter {
                     }
                     ParameterValue::Bytes(v) => {
                         b.put_varint(v.len() as u64)?;
-                        b.put_bytes(&v)?;
+                        b.put_bytes(v)?;
                     }
                 }
             }

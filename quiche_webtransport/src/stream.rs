@@ -56,7 +56,7 @@ impl Stream {
     ) -> Result<u64> {
         Ok(match self.session_id {
             None => {
-                while self.buf.len() < 1 {
+                while self.buf.is_empty() {
                     self.fill_buf(quic, h3)?;
                 }
                 let session_id_len = varint_parse_len(self.buf.buffer()[0]);

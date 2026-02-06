@@ -10,14 +10,16 @@ pub struct KeyValuePair {
 }
 
 impl KeyValuePair {
+    #[allow(unused)]
     pub(crate) fn new_varint(ty: u64, value: u64) -> Self {
-        debug_assert!(ty % 2 == 0);
+        debug_assert!(ty.is_multiple_of(2));
         Self {
             ty,
             value: KeyValuePairValue::Varint(value),
         }
     }
 
+    #[allow(unused)]
     pub(crate) fn new_bytes(ty: u64, value: Vec<u8>) -> Self {
         debug_assert!(ty % 2 == 1);
         Self {
@@ -75,7 +77,7 @@ impl ToBytes for KeyValuePair {
             KeyValuePairValue::Varint(v) => { b.put_varint(*v)?; }
             KeyValuePairValue::Bytes(v) => {
                 b.put_varint(v.len() as u64)?;
-                b.put_bytes(&v)?;
+                b.put_bytes(v)?;
             }
         }
         Ok(())
