@@ -38,7 +38,7 @@ pub(crate) fn run_subscribe(args: &SubscribeArgs) {
         (),
     );
 
-    let socket = Socket::bind("0.0.0.0:0".parse().unwrap(), false, false, false).unwrap();
+    let socket = Socket::bind("0.0.0.0:0").unwrap();
 
     let url = Url::parse(&args.url).unwrap();
     let peer_addr = *url
@@ -142,8 +142,7 @@ fn post_handle_recvs(runner: &mut Runner) {
                 match moq_session.subscribe(
                     quic_conn,
                     wt_conn,
-                    vec![conn.app_data.args.namespace.as_bytes().to_vec()],
-                    conn.app_data.args.trackname.as_bytes().to_vec(),
+                    &conn.app_data.args.namespace_trackname.parse().unwrap(),
                 ) {
                     Ok(request_id) => {
                         conn.app_data.moq_request_id = Some(request_id);
@@ -163,8 +162,8 @@ fn post_handle_recvs(runner: &mut Runner) {
                 match moq_session.poll_subscribe_response(request_id) {
                     Some(Ok((track_alias, _cm))) => {
                         info!(
-                            "subscribed to: {} {}",
-                            conn.app_data.args.namespace, conn.app_data.args.trackname
+                            "subscribed to: {}",
+                            conn.app_data.args.namespace_trackname
                         );
                         conn.app_data.track_alias = Some(track_alias);
                         track_alias

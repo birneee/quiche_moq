@@ -1003,7 +1003,6 @@ dependencies = [
 [[package]]
 name = "quiche_endpoint"
 version = "0.1.0"
-source = "git+https://github.com/birneee/quiche_endpoint#b5c0fcb24eddb30d20d95ea5b0ddee18b3411e2a"
 dependencies = [
  "boring",
  "log",
@@ -1024,7 +1023,6 @@ dependencies = [
 [[package]]
 name = "quiche_mio_runner"
 version = "0.1.0"
-source = "git+https://github.com/birneee/quiche_mio_runner#d2f25fe80b37d2fe90e031d6f14d323e39282f90"
 dependencies = [
  "libc",
  "log",
@@ -1065,9 +1063,12 @@ dependencies = [
 name = "quiche_moq_webtransport_helper"
 version = "0.1.0"
 dependencies = [
+ "boring",
+ "env_logger",
  "log",
  "quiche",
  "quiche_h3_utils",
+ "quiche_mio_runner",
  "quiche_moq",
  "quiche_webtransport",
  "url",

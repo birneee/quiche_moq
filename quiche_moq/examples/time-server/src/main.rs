@@ -63,7 +63,7 @@ fn main() {
         AppData::default(),
     );
 
-    let socket = Socket::bind("0.0.0.0:8080".parse().unwrap(), false, false, false).unwrap();
+    let socket = Socket::bind("0.0.0.0:8080").unwrap();
     info!("start server on {}", socket.local_addr);
 
     let mut runner = Runner::new(

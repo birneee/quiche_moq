@@ -33,7 +33,7 @@ fn main() {
         AppData { out },
     );
 
-    let socket = Socket::bind("0.0.0.0:0".parse().unwrap(), false, false, false).unwrap();
+    let socket = Socket::bind("0.0.0.0:0").unwrap();
 
     let server_addr = "127.0.0.1:8080".parse().unwrap();
 
@@ -90,8 +90,7 @@ fn post_handle_recvs(runner: &mut Runner) {
             moq_session.subscribe(
                 quic_conn,
                 wt_conn,
-                vec![Vec::from(b"testsrc")],
-                Vec::from(b"mp4"),
+                &"testsrc--mp4".parse().unwrap(),
             ).unwrap();
             conn.app_data.subscribed = true;
         }

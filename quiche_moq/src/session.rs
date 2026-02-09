@@ -13,7 +13,7 @@ use quiche_webtransport as wt;
 use short_buf::ShortBuf;
 use smallvec::SmallVec;
 use std::collections::HashMap;
-use quiche_moq_wire::{FromBytes, Namespace, Parameters, RequestId, Role, SetupParameters, ToBytes, TrackAlias, Tuple, Version, DEFAULT_MAX_REQUEST_ID_SETUP_PARAMETER, MOQ_VERSION_DRAFT_07, MOQ_VERSION_DRAFT_11, MOQ_VERSION_DRAFT_12, MOQ_VERSION_DRAFT_13, PROTOCOL_VIOLATION, RESET_STREAM_CODE_DELIVERY_TIMEOUT};
+use quiche_moq_wire::{FromBytes, Namespace, NamespaceTrackname, Parameters, RequestId, Role, SetupParameters, ToBytes, TrackAlias, Tuple, Version, DEFAULT_MAX_REQUEST_ID_SETUP_PARAMETER, MOQ_VERSION_DRAFT_07, MOQ_VERSION_DRAFT_11, MOQ_VERSION_DRAFT_12, MOQ_VERSION_DRAFT_13, PROTOCOL_VIOLATION, RESET_STREAM_CODE_DELIVERY_TIMEOUT};
 use quiche_moq_wire::control_message::{AnnounceMessage, AnnounceOkMessage, ClientSetupMessage, ControlMessage, ServerSetupMessage, SubscribeErrorMessage, SubscribeOkMessage};
 use quiche_moq_wire::control_message::subscribe::{FilterType, SubscribeMessage};
 use quiche_moq_wire::object::ObjectHeader;
@@ -133,8 +133,7 @@ impl MoqTransportSession {
         &mut self,
         conn: &mut quiche::Connection,
         wt: &mut wt::Connection,
-        namespace: Vec<Vec<u8>>,
-        trackname: Vec<u8>,
+        namespace_trackname: &NamespaceTrackname,
     ) -> Result<RequestId> {
         if self.next_request_id > self.max_request_id && !self.config.ignore_max_request_quota {
             return Err(Error::RequestBlocked);
@@ -148,8 +147,7 @@ impl MoqTransportSession {
             &ControlMessage::Subscribe(SubscribeMessage {
                 request_id,
                 track_alias,
-                track_namespace: namespace,
-                track_name: trackname.clone(),
+                namespace_trackname: namespace_trackname.clone(),
                 subscriber_priority: 1,
                 group_order: 2,
                 forward: Some(0),
@@ -162,7 +160,7 @@ impl MoqTransportSession {
         self.pending_subscribe
             .insert(request_id, PendingSubscribe::new(track_alias));
         self.next_request_id += 2;
-        debug!("moq subscribe {:?}", String::from_utf8_lossy(&trackname));
+        debug!("moq subscribe {}", &namespace_trackname);
         Ok(request_id)
     }
 

@@ -163,8 +163,8 @@ mod tests {
             let cm = ControlMessage::from_bytes(&mut o, MOQ_VERSION_DRAFT_07).unwrap();
             println!("{:?}", cm);
             let ControlMessage::Subscribe(cm) = cm else { panic!() };
-            println!("namespace: {}", cm.track_namespace.iter().map(|e| str::from_utf8(&e).unwrap()).collect::<Vec<&str>>().join(" "));
-            println!("name: {}", str::from_utf8(&cm.track_name).unwrap());
+            println!("namespace: {}", cm.track_namespace().iter().map(|e| str::from_utf8(&e).unwrap()).collect::<Vec<&str>>().join(" "));
+            println!("name: {}", str::from_utf8(&cm.track_name()).unwrap());
         }
     }
 
@@ -173,8 +173,7 @@ mod tests {
         let cm1 = SubscribeMessage {
             request_id: 5,
             track_alias: Some(7),
-            track_namespace: vec![b"namespace".to_vec()],
-            track_name: b"name".to_vec(),
+            namespace_trackname: "namespace--name".parse().unwrap(),
             subscriber_priority: 1,
             group_order: 2,
             forward: None,
@@ -206,8 +205,7 @@ mod tests {
         let sm = SubscribeMessage {
             request_id: 5,
             track_alias: Some(7),
-            track_namespace: vec![],
-            track_name: vec![],
+            namespace_trackname: "namespace--track".parse().unwrap(),
             subscriber_priority: 0,
             group_order: 0,
             forward: None,

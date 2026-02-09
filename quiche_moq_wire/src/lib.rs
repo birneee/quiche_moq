@@ -13,6 +13,7 @@ mod bytes;
 mod error;
 mod octets;
 pub mod control_message;
+mod namespace_trackname;
 
 pub use bytes::FromBytes;
 pub use bytes::ToBytes;
@@ -25,6 +26,7 @@ pub use setup_parameters::SetupParameters;
 pub use role::Role;
 pub use namespace::Namespace;
 pub use tuple::Tuple;
+pub use namespace_trackname::NamespaceTrackname;
 
 pub type RequestId = u64;
 pub type Version = u64;

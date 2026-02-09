@@ -55,8 +55,7 @@ mod test {
         c_moq.subscribe(
             &mut pipe.client,
             &mut c_wt,
-            vec![b"n1".into()],
-            b"t1".into(),
+            &"n1--t1".parse().unwrap(),
         ).unwrap();
 
         pipe.advance().unwrap();

@@ -34,7 +34,7 @@ pub(crate) fn run_publish(args: &PublishArgs) {
         (),
     );
 
-    let socket = Socket::bind("[::]:0".parse().unwrap(), false, false, false).unwrap();
+    let socket = Socket::bind("[::]:0").unwrap();
 
     let url = Url::parse(&args.url).unwrap();
     let peer_addr = *url

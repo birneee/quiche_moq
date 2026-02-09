@@ -122,7 +122,7 @@ fn main() {
         },
     );
 
-    let socket = Socket::bind("0.0.0.0:8080".parse().unwrap(), false, false, false).unwrap();
+    let socket = Socket::bind("0.0.0.0:8080").unwrap();
     info!("start server on {}", socket.local_addr);
 
     let mut runner = Runner::new(
@@ -201,8 +201,8 @@ fn post_handle_recvs(runner: &mut Runner) {
         moq.poll(quic_conn, h3_conn, wt_conn);
         while let Some(request_id) = moq.next_pending_received_subscription() {
             let sub = moq.pending_received_subscription(request_id);
-            assert_eq!(sub.track_namespace, [b"testsrc"]);
-            assert_eq!(sub.track_name, b"mp4");
+            assert_eq!(sub.track_namespace().0.0, [b"testsrc"]);
+            assert_eq!(sub.track_name(), b"mp4");
             let track_alias = moq.accept_subscription(quic_conn, wt_conn, request_id);
             conn.app_data
                 .tracks

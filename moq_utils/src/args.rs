@@ -33,9 +33,9 @@ pub(crate) struct SubscribeArgs {
     #[arg(env = "SSLKEYLOGFILE")]
     pub(crate) ssl_key_log_file: Option<PathBuf>,
     #[arg(long)]
-    pub(crate) namespace: String,
-    #[arg(long)]
-    pub(crate) trackname: String,
+    /// Namespace and track name
+    /// e.g. example.2enet-team2-project_x--report
+    pub(crate) namespace_trackname: String,
     /// The output file path.
     /// "-" can be used for stdout.
     #[arg(long, short = 'o')]

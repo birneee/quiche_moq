@@ -1,6 +1,6 @@
 use crate::bytes::{FromBytes, ToBytes};
 use crate::error::Error;
-use crate::{Parameters, RequestId, TrackAlias, Version, ABSOLUTE_RANGE_FILTER_ID, ABSOLUTE_START_FILTER_ID, LARGEST_OBJECT_FILTER_ID, MAX_FULL_TRACK_NAME_LEN, MAX_TRACK_NAMESPACE_TUPLE_LENGTH, MIN_TRACK_NAMESPACE_TUPLE_LENGTH, MOQ_VERSION_DRAFT_07, MOQ_VERSION_DRAFT_10, MOQ_VERSION_DRAFT_11, MOQ_VERSION_DRAFT_12, MOQ_VERSION_DRAFT_13, NEXT_GROUP_START_FILTER_ID, SUBSCRIBE_CONTROL_MESSAGE_ID};
+use crate::{Namespace, NamespaceTrackname, Parameters, RequestId, TrackAlias, Version, ABSOLUTE_RANGE_FILTER_ID, ABSOLUTE_START_FILTER_ID, LARGEST_OBJECT_FILTER_ID, MAX_FULL_TRACK_NAME_LEN, MAX_TRACK_NAMESPACE_TUPLE_LENGTH, MIN_TRACK_NAMESPACE_TUPLE_LENGTH, MOQ_VERSION_DRAFT_07, MOQ_VERSION_DRAFT_10, MOQ_VERSION_DRAFT_11, MOQ_VERSION_DRAFT_12, MOQ_VERSION_DRAFT_13, NEXT_GROUP_START_FILTER_ID, SUBSCRIBE_CONTROL_MESSAGE_ID};
 use octets::{Octets, OctetsMut};
 use crate::control_message::header::ControlMessageHeader;
 use crate::location::Location;
@@ -11,8 +11,7 @@ pub struct SubscribeMessage {
     pub request_id: RequestId,
     /// `Some` from draft 07 to draft 11
     pub track_alias: Option<TrackAlias>,
-    pub track_namespace: Vec<Vec<u8>>,
-    pub track_name: Vec<u8>,
+    pub namespace_trackname: NamespaceTrackname,
     pub subscriber_priority: u8,
     pub group_order: u8,
     /// `Some` from draft 11 to draft 13
@@ -27,11 +26,11 @@ impl SubscribeMessage {
 
     /// length of the full track name including track namespaces and track name
     pub fn full_track_name_len(&self) -> usize {
-        self.track_namespace.iter().map(|n| n.len()).sum::<usize>() + self.track_name.len()
+        self.track_namespace().iter().map(|n| n.len()).sum::<usize>() + self.track_name().len()
     }
 
     pub fn validate(&self) -> crate::error::Result<()> {
-        if !(MIN_TRACK_NAMESPACE_TUPLE_LENGTH..=MAX_TRACK_NAMESPACE_TUPLE_LENGTH).contains(&self.track_namespace.len()) {
+        if !(MIN_TRACK_NAMESPACE_TUPLE_LENGTH..=MAX_TRACK_NAMESPACE_TUPLE_LENGTH).contains(&self.track_namespace().len()) {
             return Err(Error::ProtocolViolation(format!("Namespace tuple MUST be between {} and {}", MIN_TRACK_NAMESPACE_TUPLE_LENGTH, MAX_TRACK_NAMESPACE_TUPLE_LENGTH)))
         }
         if self.full_track_name_len() > MAX_FULL_TRACK_NAME_LEN {
@@ -39,6 +38,14 @@ impl SubscribeMessage {
         }
 
         Ok(())
+    }
+
+    pub fn track_namespace(&self) -> &Namespace {
+        self.namespace_trackname.namespace()
+    }
+
+    pub fn track_name(&self) -> &[u8] {
+        self.namespace_trackname.trackname()
     }
 }
 
@@ -77,8 +84,7 @@ impl FromBytes for SubscribeMessage {
         Ok(Self {
             request_id,
             track_alias,
-            track_namespace,
-            track_name,
+            namespace_trackname: NamespaceTrackname::new(track_namespace, track_name),
             subscriber_priority,
             group_order,
             forward,
@@ -102,13 +108,13 @@ impl ToBytes for SubscribeMessage {
             MOQ_VERSION_DRAFT_12..=MOQ_VERSION_DRAFT_13 => {},
             _ => unimplemented!()
         };
-        b.put_varint(self.track_namespace.len() as u64)?;
-        for namespace in &self.track_namespace {
+        b.put_varint(self.track_namespace().len() as u64)?;
+        for namespace in self.track_namespace() {
             b.put_varint(namespace.len() as u64)?;
             b.put_bytes(namespace)?;
         }
-        b.put_varint(self.track_name.len() as u64)?;
-        b.put_bytes(&self.track_name)?;
+        b.put_varint(self.track_name().len() as u64)?;
+        b.put_bytes(self.track_name())?;
         b.put_u8(self.subscriber_priority)?;
         b.put_u8(self.group_order)?;
         match version {

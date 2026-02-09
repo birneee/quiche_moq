@@ -1,9 +1,11 @@
+#[cfg(test)]
+mod tests;
+
 use quiche::h3;
 use quiche_moq as moq;
 use quiche_moq::MoqTransportSession;
 use quiche_webtransport as wt;
-use std::mem;
-use log::{debug, error};
+use log::debug;
 use url::Url;
 use quiche_h3_utils::ALPN_HTTP_3;
 
@@ -63,7 +65,7 @@ impl MoqWebTransportHelper {
                             }
                             let moq_session_id =
                                 wt_conn.connect_session(h3_conn, quic_conn, url.clone());
-                            let State::H3 { h3_conn, wt_conn } = mem::replace(&mut self.state, State::Quic) else {
+                            let State::H3 { h3_conn, wt_conn } = std::mem::take(&mut self.state) else {
                                 unreachable!()
                             };
                             self.state = State::Wt {
@@ -92,7 +94,7 @@ impl MoqWebTransportHelper {
                             }
                             let Some(&moq_session_id) = wt_conn.session_ids().first() else { break 'conn };
                             let moq_session = MoqTransportSession::accept(moq_session_id.into(), self.moq_config.clone());
-                            let State::H3 { h3_conn, wt_conn } = mem::replace(&mut self.state, State::Quic) else {
+                            let State::H3 { h3_conn, wt_conn } = std::mem::take(&mut self.state) else {
                                 unreachable!()
                             };
                             self.state = State::Moq {
@@ -132,7 +134,30 @@ impl MoqWebTransportHelper {
                     );
                     let State::Wt {
                         h3_conn, wt_conn, ..
-                    } = mem::replace(&mut self.state, State::Quic)
+                    } = std::mem::take(&mut self.state)
+                    else {
+                        unreachable!()
+                    };
+                    self.state = State::MoqHandshake {
+                        h3_conn,
+                        wt_conn,
+                        moq_session,
+                    };
+                }
+                State::MoqHandshake {
+                    h3_conn,
+                    wt_conn,
+                    moq_session,
+                } => {
+                    Self::h3_poll_expect_nothing(h3_conn, quic_conn);
+                    wt_conn.poll(h3_conn, quic_conn);
+                    moq_session.poll(quic_conn, h3_conn, wt_conn);
+                    if !moq_session.initialized() {
+                        break 'conn; // not ready for moq
+                    }
+                    let State::MoqHandshake {
+                        h3_conn, wt_conn, moq_session, ..
+                    } = std::mem::take(&mut self.state)
                     else {
                         unreachable!()
                     };
@@ -156,13 +181,14 @@ impl MoqWebTransportHelper {
         }
     }
 
+    #[allow(clippy::never_loop)]
     fn h3_poll_expect_nothing(h3_conn: &mut h3::Connection, quic_conn: &mut quiche::Connection) {
         'h3: loop {
             match h3_conn.poll(quic_conn) {
-                Ok((_, h3::Event::Headers { .. })) => error!("unexpected h3 response"),
-                Ok(e) => error!("{:?}", e),
-                Err(h3::Error::Done) => continue 'h3,
-                Err(e) => error!("{:?}", e),
+                Ok((_, h3::Event::Headers { .. })) => unreachable!("unexpected h3 response"),
+                Ok(e) => unimplemented!("{:?}", e),
+                Err(h3::Error::Done) => break 'h3,
+                Err(e) => unimplemented!("{:?}", e),
             }
         }
     }
@@ -180,8 +206,10 @@ impl MoqWebTransportHelper {
     }
 }
 
+#[derive(Default)]
 #[allow(clippy::large_enum_variant)]
 pub enum State {
+    #[default]
     Quic,
     H3 {
         h3_conn: h3::Connection,
@@ -192,6 +220,11 @@ pub enum State {
         wt_conn: wt::Connection,
         /// The WebTransport session id used for MoQ
         moq_session_id: u64,
+    },
+    MoqHandshake {
+        h3_conn: h3::Connection,
+        wt_conn: wt::Connection,
+        moq_session: MoqTransportSession,
     },
     Moq {
         h3_conn: h3::Connection,

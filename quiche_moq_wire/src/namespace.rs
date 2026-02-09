@@ -4,7 +4,31 @@ use octets::{Octets, OctetsMut};
 use std::fmt::{Debug, Formatter};
 use crate::tuple::Tuple;
 
+#[derive(Eq, PartialEq, Clone)]
 pub struct Namespace(pub Tuple);
+
+impl Namespace {
+    pub fn len(&self) -> usize {
+        self.0.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.0.is_empty()
+    }
+
+    pub fn iter(&self) -> std::slice::Iter<'_, Vec<u8>> {
+        self.0.0.iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a Namespace {
+    type Item = &'a Vec<u8>;
+    type IntoIter = std::slice::Iter<'a, Vec<u8>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
 
 impl FromBytes for Namespace {
     fn from_bytes(b: &mut Octets, version: Version) -> crate::error::Result<Self> {
