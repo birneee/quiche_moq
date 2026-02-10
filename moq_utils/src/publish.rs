@@ -7,8 +7,7 @@ use quiche_mio_runner::quiche_endpoint::quiche::PROTOCOL_VERSION;
 use quiche_mio_runner::quiche_endpoint::{EndpointConfig, quiche};
 use quiche_mio_runner::{Socket, quiche_endpoint};
 use quiche_moq as moq;
-use quiche_moq_webtransport_helper::{MoqWebTransportHelper, State};
-use quiche_webtransport as wt;
+use quiche_moq_webtransport_helper::{MoqWebTransportHelper, MoqHandle};
 use std::fs;
 use url::Url;
 use quiche_moq::PublishStatus;
@@ -94,37 +93,26 @@ fn post_handle_recvs(r: &mut Runner) {
         let Some(conn) = r.endpoint.conn_mut(icid) else {
             continue;
         };
-        let quic_conn = &mut conn.conn;
-        conn.app_data.moq_helper.on_post_handle_recvs(quic_conn);
-        match &mut conn.app_data.moq_helper.state {
-            State::Quic => {
-                assert!(!quic_conn.is_timed_out());
-                assert!(!quic_conn.is_closed());
-                assert!(quic_conn.local_error().is_none());
-                assert!(quic_conn.peer_error().is_none());
-            }
-            State::H3 { .. } => {}
-            State::Wt { .. } => {}
-            State::MoqHandshake { .. } => {}
-            State::Moq {
-                wt_conn,
-                moq_session,
-                ..
-            } => post_handle_recvs_conn(moq_session, wt_conn, &mut conn.conn, &conn.app_data.namespace_trackname),
-        }
+        conn.app_data.moq_helper.on_post_handle_recvs(&mut conn.conn);
+        let Some(moq) = conn.app_data.moq_helper.moq_handle(&mut conn.conn) else {
+            // Not ready yet - verify QUIC connection is healthy
+            assert!(!conn.conn.is_timed_out());
+            assert!(!conn.conn.is_closed());
+            assert!(conn.conn.local_error().is_none());
+            assert!(conn.conn.peer_error().is_none());
+            continue;
+        };
+        post_handle_recvs_conn(moq, &conn.app_data.namespace_trackname);
     }
 }
 
 fn post_handle_recvs_conn(
-    moq_session: &mut moq::MoqTransportSession,
-    wt_conn: &mut wt::Connection,
-    quic_conn: &mut quiche::Connection,
+    mut moq: MoqHandle,
     namespace_trackname: &NamespaceTrackname,
 ) {
-    match moq_session.publish_namespace_status(namespace_trackname.namespace()) {
+    match moq.publish_namespace_status(namespace_trackname.namespace()) {
         PublishStatus::Unknown => {
-            moq_session
-                .publish_namespace(quic_conn, wt_conn, namespace_trackname.namespace().0.0.clone())
+            moq.publish_namespace(namespace_trackname.namespace().0.0.clone())
                 .unwrap()
         }
         PublishStatus::Pending => {
