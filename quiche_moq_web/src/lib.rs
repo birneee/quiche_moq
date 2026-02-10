@@ -5,7 +5,7 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{Document, HtmlVideoElement, ReadableStreamDefaultReader, WebTransport, WebTransportBidirectionalStream, Window};
 use web_sys::js_sys::{Object, Reflect, Uint8Array};
-use quiche_moq_wire::control_message::{ClientSetupMessage, ControlMessage};
+use quiche_moq_wire::control_message::{ClientSetupMessage, ControlMessageEnum};
 use quiche_moq_wire::{FromBytes, SetupParameters, ToBytes, MOQ_VERSION_DRAFT_13};
 
 #[wasm_bindgen]
@@ -63,13 +63,13 @@ pub async fn start() -> Result<(), JsValue> {
         let value = value.to_vec();
         let mut o =  Octets::with_slice(&value.as_slice()[..value.len()]);
         loop {
-            let cm = match ControlMessage::from_bytes(&mut o, version) {
+            let cm = match ControlMessageEnum::from_bytes(&mut o, version) {
                 Ok(cm) => cm,
                 Err(quiche_moq_wire::Error::Octets(octets::BufferTooShortError)) => break,
                 Err(e) => unimplemented!("{:?}", e)
             };
             match cm {
-                ControlMessage::ServerSetup(setup) => {
+                ControlMessageEnum::ServerSetup(setup) => {
                     info!("received moq setup, {:?}", setup);
                 }
                 cm => unimplemented!("{:?}", cm),

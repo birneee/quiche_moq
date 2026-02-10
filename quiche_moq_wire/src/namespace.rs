@@ -1,10 +1,10 @@
 use crate::bytes::{FromBytes, ToBytes};
 use crate::Version;
 use octets::{Octets, OctetsMut};
-use std::fmt::{Debug, Formatter};
+use std::fmt::{Debug, Display, Formatter};
 use crate::tuple::Tuple;
 
-#[derive(Eq, PartialEq, Clone)]
+#[derive(Eq, PartialEq, Clone, Hash)]
 pub struct Namespace(pub Tuple);
 
 impl Namespace {
@@ -47,5 +47,17 @@ impl Debug for Namespace {
         f.debug_list()
             .entries(self.0.0.iter().map(|v| String::from_utf8_lossy(v.as_slice())))
             .finish()
+    }
+}
+
+impl Display for Namespace {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        for (i, part) in self.0.0.iter().enumerate() {
+            if i > 0 {
+                f.write_str("-")?;
+            }
+            crate::namespace_trackname::write_escape(f, part)?;
+        }
+        Ok(())
     }
 }

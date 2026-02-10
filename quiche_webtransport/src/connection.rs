@@ -183,7 +183,9 @@ impl Connection {
             .get_mut(&stream_id)
             .ok_or(Error::NoStreamState)?;
         assert_eq!(stream.session_id, Some(session_id));
-        stream.recv(h3, quic, b)
+        let len = stream.recv(h3, quic, b)?;
+        trace!("recv on stream {}: {:?}", stream_id, &b[..len]);
+        Ok(len)
     }
 
     /// Return if the WebTransport session has been established.

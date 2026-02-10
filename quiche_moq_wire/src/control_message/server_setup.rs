@@ -59,7 +59,7 @@ impl FromBytes for ServerSetupMessage {
 
 #[cfg(test)]
 mod test {
-    use crate::control_message::ControlMessage;
+    use crate::control_message::ControlMessageEnum;
     use super::*;
     use crate::MOQ_VERSION_DRAFT_07;
 
@@ -67,16 +67,16 @@ mod test {
     fn decode_draft7() {
         let b = [0x40, 0x41, 0xc, 0xc0, 0x0, 0x0, 0x0, 0xff, 0x0, 0x0, 0x7, 0x1, 0x0, 0x1, 0x3];
         let mut b = Octets::with_slice(&b);
-        let cm = ControlMessage::from_bytes(&mut b, MOQ_VERSION_DRAFT_07).unwrap();
+        let cm = ControlMessageEnum::from_bytes(&mut b, MOQ_VERSION_DRAFT_07).unwrap();
         assert_eq!(b.cap(), 0);
-        assert!(matches!(cm, ControlMessage::ServerSetup(..)));
+        assert!(matches!(cm, ControlMessageEnum::ServerSetup(..)));
         println!("{:?}", cm);
 
         let b = [0x40, 0x41, 0x9, 0xc0, 0x0, 0x0, 0x0, 0xff, 0xd, 0xad, 0x1, 0x0];
         let mut b = Octets::with_slice(&b);
-        let cm = ControlMessage::from_bytes(&mut b, MOQ_VERSION_DRAFT_07).unwrap();
+        let cm = ControlMessageEnum::from_bytes(&mut b, MOQ_VERSION_DRAFT_07).unwrap();
         assert_eq!(b.cap(), 0);
-        assert!(matches!(cm, ControlMessage::ServerSetup(..)));
+        assert!(matches!(cm, ControlMessageEnum::ServerSetup(..)));
         println!("{:?}", cm);
     }
 }

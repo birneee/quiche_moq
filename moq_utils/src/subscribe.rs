@@ -1,7 +1,6 @@
 extern crate core;
 
 use crate::args::SubscribeArgs;
-use crate::h3::ALPN_HTTP_3;
 use bytes::{BufMut, BytesMut};
 use log::{debug, error, info};
 use quiche_mio_runner as runner;
@@ -15,6 +14,7 @@ use std::fs;
 use std::fs::File;
 use std::io::Write;
 use url::Url;
+use quiche_h3_utils::ALPN_HTTP_3;
 use quiche_moq_webtransport_helper::{MoqWebTransportHelper, State};
 
 struct ConnAppData {

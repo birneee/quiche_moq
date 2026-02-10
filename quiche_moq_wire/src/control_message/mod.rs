@@ -1,8 +1,9 @@
+use std::fmt::Debug;
 use crate::bytes::{FromBytes, ToBytes};
 use crate::error::Error::ProtocolViolation;
-use crate::{control_message, Version, ANNOUNCE_CONTROL_MESSAGE_ID, ANNOUNCE_OK_CONTROL_MESSAGE_ID, CLIENT_SETUP_CONTROL_MESSAGE_ID, CLIENT_SETUP_CONTROL_MESSAGE_ID_VERSION_UNTIL_10, MOQ_VERSION_DRAFT_07, MOQ_VERSION_DRAFT_10, MOQ_VERSION_DRAFT_11, MOQ_VERSION_DRAFT_13, REQUEST_BLOCKED_CONTROL_MESSAGE_ID, SERVER_SETUP_CONTROL_MESSAGE_ID, SERVER_SETUP_CONTROL_MESSAGE_ID_VERSION_UNTIL_10, SUBSCRIBE_CONTROL_MESSAGE_ID, SUBSCRIBE_DONE_CONTROL_MESSAGE_ID, SUBSCRIBE_ERROR_CONTROL_MESSAGE_ID, SUBSCRIBE_OK_CONTROL_MESSAGE_ID, TRACK_STATUS_CONTROL_MESSAGE_ID, UNSUBSCRIBE_NAMESPACE_MESSAGE_ID};
+use crate::{control_message, Version, ANNOUNCE_CONTROL_MESSAGE_ID, ANNOUNCE_OK_CONTROL_MESSAGE_ID, CLIENT_SETUP_CONTROL_MESSAGE_ID, CLIENT_SETUP_CONTROL_MESSAGE_ID_VERSION_UNTIL_10, MOQ_VERSION_DRAFT_07, MOQ_VERSION_DRAFT_10, MOQ_VERSION_DRAFT_11, MOQ_VERSION_DRAFT_13, PUBLISH_OK_CONTROL_MESSAGE_ID, REQUEST_BLOCKED_CONTROL_MESSAGE_ID, SERVER_SETUP_CONTROL_MESSAGE_ID, SERVER_SETUP_CONTROL_MESSAGE_ID_VERSION_UNTIL_10, SUBSCRIBE_CONTROL_MESSAGE_ID, SUBSCRIBE_DONE_CONTROL_MESSAGE_ID, SUBSCRIBE_ERROR_CONTROL_MESSAGE_ID, SUBSCRIBE_OK_CONTROL_MESSAGE_ID, TRACK_STATUS_CONTROL_MESSAGE_ID, UNSUBSCRIBE_NAMESPACE_MESSAGE_ID};
 use octets::{Octets, OctetsMut};
-pub use announce::AnnounceMessage;
+pub use announce::PublishNamespaceMessage;
 pub use announce_ok::AnnounceOkMessage;
 pub use client_setup::ClientSetupMessage;
 pub use request_blocked::RequestBlockedMessage;
@@ -12,6 +13,8 @@ pub use subscribe_done::SubscribeDoneMessage;
 pub use subscribe_error::SubscribeErrorMessage;
 pub use subscribe_ok::SubscribeOkMessage;
 pub use unsubscribe_namespace::UnsubscribeNamespaceMessage;
+pub use publish_ok::PublishOkMessage;
+use crate::control_message::header::ControlMessageHeader;
 use crate::control_message::track_status::TrackStatusMessage;
 use crate::octets::{peek_varint, put_u16_at, put_varint_with_len_at};
 
@@ -27,9 +30,10 @@ mod subscribe_ok;
 mod subscribe_error;
 mod unsubscribe_namespace;
 mod track_status;
+mod publish_ok;
 
 #[derive(Debug)]
-pub enum ControlMessage {
+pub enum ControlMessageEnum {
     Subscribe(SubscribeMessage),
     ClientSetup(ClientSetupMessage),
     ServerSetup(ServerSetupMessage),
@@ -37,13 +41,14 @@ pub enum ControlMessage {
     RequestBlocked(RequestBlockedMessage),
     SubscribeDone(SubscribeDoneMessage),
     SubscribeError(SubscribeErrorMessage),
-    Announce(AnnounceMessage),
+    PublishNamespace(PublishNamespaceMessage),
     AnnounceOk(AnnounceOkMessage),
     UnsubscribeNamespace(UnsubscribeNamespaceMessage),
     TrackStatus(TrackStatusMessage),
+    PublishOk(PublishOkMessage),
 }
 
-impl ControlMessage {
+impl ControlMessageEnum {
     /// check if the buf length matches the encoded length
     fn length_ok(b: &mut OctetsMut, start_off: usize, version: Version) -> bool {
         let end_off = b.off();
@@ -61,16 +66,17 @@ impl ControlMessage {
     }
 }
 
-impl ToBytes for ControlMessage {
+impl ToBytes for ControlMessageEnum {
     fn to_bytes(&self, b: &mut OctetsMut, version: Version) -> crate::error::Result<()> {
         let start_off = b.off();
         match self {
-            ControlMessage::Subscribe(m) => m.to_bytes(b, version)?,
-            ControlMessage::ClientSetup(m) => m.to_bytes(b, version)?,
-            ControlMessage::AnnounceOk(m) => m.to_bytes(b, version)?,
-            ControlMessage::ServerSetup(m) => m.to_bytes(b, version)?,
-            ControlMessage::SubscribeOk(m) => m.to_bytes(b, version)?,
-            ControlMessage::Announce(m) => m.to_bytes(b, version)?,
+            ControlMessageEnum::Subscribe(m) => m.to_bytes(b, version)?,
+            ControlMessageEnum::ClientSetup(m) => m.to_bytes(b, version)?,
+            ControlMessageEnum::AnnounceOk(m) => m.to_bytes(b, version)?,
+            ControlMessageEnum::ServerSetup(m) => m.to_bytes(b, version)?,
+            ControlMessageEnum::SubscribeOk(m) => m.to_bytes(b, version)?,
+            ControlMessageEnum::PublishNamespace(m) => m.to_bytes(b, version)?,
+            ControlMessageEnum::PublishOk(m) => m.to_bytes(b, version)?,
             _ => unimplemented!(),
         };
         debug_assert!(Self::length_ok(b, start_off, version));
@@ -104,37 +110,38 @@ pub(crate) fn set_control_message_length(b: &mut OctetsMut, len_off: usize, vers
     Ok(())
 }
 
-impl FromBytes for ControlMessage {
+impl FromBytes for ControlMessageEnum {
     fn from_bytes(b: &mut Octets, version: Version) -> crate::error::Result<Self> {
         let ty = peek_varint(b)?;
         Ok(match ty {
             SERVER_SETUP_CONTROL_MESSAGE_ID_VERSION_UNTIL_10 | SERVER_SETUP_CONTROL_MESSAGE_ID => {
-                ControlMessage::ServerSetup(ServerSetupMessage::from_bytes(b, version)?)
+                ControlMessageEnum::ServerSetup(ServerSetupMessage::from_bytes(b, version)?)
             }
             SUBSCRIBE_OK_CONTROL_MESSAGE_ID => {
-                ControlMessage::SubscribeOk(SubscribeOkMessage::from_bytes(b, version)?)
+                ControlMessageEnum::SubscribeOk(SubscribeOkMessage::from_bytes(b, version)?)
             }
             REQUEST_BLOCKED_CONTROL_MESSAGE_ID => {
-                ControlMessage::RequestBlocked(RequestBlockedMessage::from_bytes(b, version)?)
+                ControlMessageEnum::RequestBlocked(RequestBlockedMessage::from_bytes(b, version)?)
             }
             SUBSCRIBE_DONE_CONTROL_MESSAGE_ID => {
-                ControlMessage::SubscribeDone(SubscribeDoneMessage::from_bytes(b, version)?)
+                ControlMessageEnum::SubscribeDone(SubscribeDoneMessage::from_bytes(b, version)?)
             }
             SUBSCRIBE_ERROR_CONTROL_MESSAGE_ID => {
-                ControlMessage::SubscribeError(SubscribeErrorMessage::from_bytes(b, version)?)
+                ControlMessageEnum::SubscribeError(SubscribeErrorMessage::from_bytes(b, version)?)
             }
             ANNOUNCE_CONTROL_MESSAGE_ID => {
-                ControlMessage::Announce(AnnounceMessage::from_bytes(b, version)?)
+                ControlMessageEnum::PublishNamespace(PublishNamespaceMessage::from_bytes(b, version)?)
             }
             CLIENT_SETUP_CONTROL_MESSAGE_ID_VERSION_UNTIL_10 | CLIENT_SETUP_CONTROL_MESSAGE_ID => {
-                ControlMessage::ClientSetup(ClientSetupMessage::from_bytes(b, version)?)
+                ControlMessageEnum::ClientSetup(ClientSetupMessage::from_bytes(b, version)?)
             }
             SUBSCRIBE_CONTROL_MESSAGE_ID => {
-                ControlMessage::Subscribe(SubscribeMessage::from_bytes(b, version)?)
+                ControlMessageEnum::Subscribe(SubscribeMessage::from_bytes(b, version)?)
             }
-            UNSUBSCRIBE_NAMESPACE_MESSAGE_ID => ControlMessage::UnsubscribeNamespace(UnsubscribeNamespaceMessage::from_bytes(b, version)?),
-            TRACK_STATUS_CONTROL_MESSAGE_ID => ControlMessage::TrackStatus(TrackStatusMessage::from_bytes(b, version)?),
-            ANNOUNCE_OK_CONTROL_MESSAGE_ID => ControlMessage::AnnounceOk(AnnounceOkMessage::from_bytes(b, version)?),
+            UNSUBSCRIBE_NAMESPACE_MESSAGE_ID => ControlMessageEnum::UnsubscribeNamespace(UnsubscribeNamespaceMessage::from_bytes(b, version)?),
+            TRACK_STATUS_CONTROL_MESSAGE_ID => ControlMessageEnum::TrackStatus(TrackStatusMessage::from_bytes(b, version)?),
+            ANNOUNCE_OK_CONTROL_MESSAGE_ID => ControlMessageEnum::AnnounceOk(AnnounceOkMessage::from_bytes(b, version)?),
+            PUBLISH_OK_CONTROL_MESSAGE_ID => ControlMessageEnum::PublishOk(PublishOkMessage::from_bytes(b, version)?),
             _ => {
                 return Err(ProtocolViolation(format!(
                     "unexpected control message with id {}",
@@ -160,9 +167,9 @@ mod tests {
 
         for msg in mesgs {
             let mut o = Octets::with_slice(&msg);
-            let cm = ControlMessage::from_bytes(&mut o, MOQ_VERSION_DRAFT_07).unwrap();
+            let cm = ControlMessageEnum::from_bytes(&mut o, MOQ_VERSION_DRAFT_07).unwrap();
             println!("{:?}", cm);
-            let ControlMessage::Subscribe(cm) = cm else { panic!() };
+            let ControlMessageEnum::Subscribe(cm) = cm else { panic!() };
             println!("namespace: {}", cm.track_namespace().iter().map(|e| str::from_utf8(&e).unwrap()).collect::<Vec<&str>>().join(" "));
             println!("name: {}", str::from_utf8(&cm.track_name()).unwrap());
         }
@@ -196,7 +203,7 @@ mod tests {
     fn decode_subscribe_ok_draft7() {
         let b = [0x4, 0x5, 0x0, 0x0, 0x2, 0x0, 0x0];
         let mut o = Octets::with_slice(&b);
-        let cm = ControlMessage::from_bytes(&mut o, MOQ_VERSION_DRAFT_07).unwrap();
+        let cm = ControlMessageEnum::from_bytes(&mut o, MOQ_VERSION_DRAFT_07).unwrap();
         println!("{:?}", cm);
     }
 
@@ -222,5 +229,32 @@ mod tests {
         let mut o = Octets::with_slice(&b[..len]);
         let som2 = SubscribeOkMessage::from_bytes(&mut o, MOQ_VERSION_DRAFT_07).unwrap();
         assert_eq!(som, som2);
+    }
+}
+
+trait ControlMessage: Debug + Sized {
+
+    fn message_id() -> u64;
+
+    /// without header
+    fn to_body_bytes(&self, b: &mut OctetsMut, version: Version) -> crate::error::Result<()>;
+
+    /// without header
+    fn from_body_bytes(b: &mut Octets, version: Version) -> crate::error::Result<Self>;
+}
+
+impl<T> ToBytes for T where T: ControlMessage {
+    fn to_bytes(&self, b: &mut OctetsMut, version: Version) -> crate::Result<()> {
+        encode_control_message(T::message_id(), version, b, |b| {
+            T::to_body_bytes(self, b, version)
+        })
+    }
+}
+
+impl<T> FromBytes for T where T: ControlMessage {
+    fn from_bytes(b: &mut Octets, version: Version) -> crate::Result<Self> {
+        let header = ControlMessageHeader::from_bytes(b, version)?;
+        assert_eq!(header.ty(), T::message_id());
+        T::from_body_bytes(b, version)
     }
 }

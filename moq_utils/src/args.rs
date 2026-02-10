@@ -16,13 +16,17 @@ pub(crate) enum Command {
     Subscribe(SubscribeArgs),
 }
 
-#[derive(Parser)]
+#[derive(Parser, Clone)]
 pub(crate) struct PublishArgs {
     /// The url to connect to
     #[arg()]
     pub(crate) url: String,
-    #[arg(env = "SSLKEYLOGFILE")]
+    #[arg(env = "SSLKEYLOGFILE", long)]
     pub(crate) ssl_key_log_file: Option<PathBuf>,
+    #[arg(short = 't')]
+    /// Namespace and track name
+    /// e.g. example.2enet-team2-project_x--report
+    pub(crate) namespace_trackname: String,
 }
 
 #[derive(Parser, Clone)]

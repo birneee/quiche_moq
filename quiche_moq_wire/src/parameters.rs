@@ -27,6 +27,7 @@ impl FromBytes for Parameters {
 }
 
 impl ToBytes for Parameters {
+    /// including the length varint
     fn to_bytes(&self, b: &mut OctetsMut, version: Version) -> crate::error::Result<()> {
         b.put_varint(self.0.len() as u64)?;
         for p in &self.0 {

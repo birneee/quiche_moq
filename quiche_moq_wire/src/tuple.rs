@@ -3,7 +3,7 @@ use crate::bytes::FromBytes;
 use crate::error::Result;
 use crate::{ToBytes, Version};
 
-#[derive(Debug, Eq, PartialEq, Clone)]
+#[derive(Debug, Eq, PartialEq, Clone, Hash)]
 pub struct Tuple(pub Vec<Vec<u8>>);
 
 impl FromBytes for Tuple {

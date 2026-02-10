@@ -13,3 +13,4 @@ log = { workspace = true }
 url = { workspace = true }
 bytes = { workspace = true }
 quiche_moq_webtransport_helper = { workspace = true }
+quiche_h3_utils = { workspace = true }

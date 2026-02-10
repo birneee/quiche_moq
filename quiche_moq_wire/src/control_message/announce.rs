@@ -7,14 +7,16 @@ use crate::control_message::header::ControlMessageHeader;
 use crate::namespace::Namespace;
 
 #[derive(Debug)]
-pub struct AnnounceMessage {
+/// Called ANNOUNCE before draft-13
+/// Called PUBLISH_NAMESPACE since draft-14
+pub struct PublishNamespaceMessage {
     /// Some for DRAFT 11 to 13
     request_id: Option<RequestId>,
     track_namespace: Namespace,
     parameters: Parameters,
 }
 
-impl AnnounceMessage {
+impl PublishNamespaceMessage {
     pub fn new(request_id: Option<RequestId>, track_namespace: Namespace, parameters: Parameters) -> Self {
         Self {
             request_id,
@@ -25,9 +27,17 @@ impl AnnounceMessage {
 
     /// Some for DRAFT 11 to 13
     pub fn request_id(&self) -> Option<RequestId> { self.request_id }
+
+    pub fn track_namespace(&self) -> &Namespace {
+        &self.track_namespace
+    }
+
+    pub fn take_track_namespace(self) -> Namespace {
+        self.track_namespace
+    }
 }
 
-impl FromBytes for AnnounceMessage {
+impl FromBytes for PublishNamespaceMessage {
     fn from_bytes(b: &mut Octets, version: Version) -> Result<Self> {
         let header = ControlMessageHeader::from_bytes(b, version)?;
         assert_eq!(header.ty(), ANNOUNCE_CONTROL_MESSAGE_ID);
@@ -51,7 +61,7 @@ impl FromBytes for AnnounceMessage {
     }
 }
 
-impl ToBytes for AnnounceMessage {
+impl ToBytes for PublishNamespaceMessage {
     fn to_bytes(&self, b: &mut OctetsMut, version: Version) -> Result<()> {
         encode_control_message(ANNOUNCE_CONTROL_MESSAGE_ID, version, b, |b| {
             match version {

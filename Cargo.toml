@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "http_capsule",
+    "moq_relay",
     "moq_utils",
     "quiche_h3_utils",
     "quiche_moq",

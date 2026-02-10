@@ -65,12 +65,7 @@ impl FromStr for NamespaceTrackname {
 
 impl Display for NamespaceTrackname {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        for (i, part) in self.namespace.0.0.iter().enumerate() {
-            if i > 0 {
-                f.write_str("-")?;
-            }
-            write_escape(f, part)?;
-        }
+        self.namespace.fmt(f)?;
         f.write_str("--")?;
         write_escape(f, &self.trackname)
     }
@@ -106,7 +101,7 @@ fn escape_len(data: &[u8]) -> usize {
     }).sum()
 }
 
-fn write_escape(f: &mut fmt::Formatter<'_>, data: &[u8]) -> fmt::Result {
+pub(crate) fn write_escape(f: &mut fmt::Formatter<'_>, data: &[u8]) -> fmt::Result {
     const HEX_CHARS: &[u8; 16] = b"0123456789abcdef";
     for &b in data {
         match b {

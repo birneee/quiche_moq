@@ -16,6 +16,7 @@ pub use quiche_moq_wire as wire;
 pub use config::Config;
 pub use error::Error;
 pub use session::MoqTransportSession;
+pub use session::PublishStatus;
 
 
 #[cfg(test)]
