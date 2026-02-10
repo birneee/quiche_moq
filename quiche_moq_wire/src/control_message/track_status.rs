@@ -1,5 +1,5 @@
 use octets::{Octets, OctetsMut};
-use crate::{FromBytes, ToBytes, Version, TRACK_STATUS_CONTROL_MESSAGE_ID};
+use crate::{FromBytes, ToBytes, Version, TRACK_STATUS_MESSAGE_ID};
 use crate::control_message::ControlMessage;
 use crate::namespace::Namespace;
 
@@ -14,7 +14,7 @@ pub struct TrackStatusMessage {
 }
 
 impl ControlMessage for TrackStatusMessage {
-    const MESSAGE_IDS: &'static [u64] = &[TRACK_STATUS_CONTROL_MESSAGE_ID];
+    const MESSAGE_IDS: &'static [u64] = &[TRACK_STATUS_MESSAGE_ID];
 
     fn to_body_bytes(&self, b: &mut OctetsMut, version: Version) -> crate::error::Result<()> {
         self.track_namespace.to_bytes(b, version)?;

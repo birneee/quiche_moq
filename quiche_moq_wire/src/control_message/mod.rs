@@ -3,14 +3,14 @@ use crate::bytes::{FromBytes, ToBytes};
 use crate::error::Error::ProtocolViolation;
 use crate::{control_message, Version, MOQ_VERSION_DRAFT_07, MOQ_VERSION_DRAFT_10, MOQ_VERSION_DRAFT_11, MOQ_VERSION_DRAFT_13};
 use octets::{Octets, OctetsMut};
-pub use announce::PublishNamespaceMessage;
-pub use announce_ok::AnnounceOkMessage;
+pub use publish_namespace::PublishNamespaceMessage;
+pub use request_ok::RequestOkMessage;
 pub use client_setup::ClientSetupMessage;
-pub use request_blocked::RequestBlockedMessage;
+pub use requests_blocked::RequestsBlockedMessage;
 pub use server_setup::ServerSetupMessage;
 pub use subscribe::SubscribeMessage;
-pub use subscribe_done::SubscribeDoneMessage;
-pub use subscribe_error::SubscribeErrorMessage;
+pub use publish_done::PublishDoneMessage;
+pub use request_error::RequestErrorMessage;
 pub use subscribe_ok::SubscribeOkMessage;
 pub use unsubscribe_namespace::UnsubscribeNamespaceMessage;
 pub use publish_ok::PublishOkMessage;
@@ -18,16 +18,16 @@ use crate::control_message::header::ControlMessageHeader;
 use crate::control_message::track_status::TrackStatusMessage;
 use crate::octets::{peek_varint, put_u16_at, put_varint_with_len_at};
 
-mod announce;
-mod announce_ok;
+mod publish_namespace;
+mod request_ok;
 mod client_setup;
 pub(crate) mod header;
-mod request_blocked;
+mod requests_blocked;
 mod server_setup;
 pub mod subscribe;
-mod subscribe_done;
+mod publish_done;
 mod subscribe_ok;
-mod subscribe_error;
+mod request_error;
 mod unsubscribe_namespace;
 mod track_status;
 mod publish_ok;
@@ -69,11 +69,11 @@ control_message_enum! {
     ClientSetup(ClientSetupMessage),
     ServerSetup(ServerSetupMessage),
     SubscribeOk(SubscribeOkMessage),
-    RequestBlocked(RequestBlockedMessage),
-    SubscribeDone(SubscribeDoneMessage),
-    SubscribeError(SubscribeErrorMessage),
+    RequestsBlocked(RequestsBlockedMessage),
+    PublishDone(PublishDoneMessage),
+    RequestError(RequestErrorMessage),
     PublishNamespace(PublishNamespaceMessage),
-    AnnounceOk(AnnounceOkMessage),
+    RequestOk(RequestOkMessage),
     UnsubscribeNamespace(UnsubscribeNamespaceMessage),
     TrackStatus(TrackStatusMessage),
     PublishOk(PublishOkMessage),

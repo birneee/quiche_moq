@@ -1,18 +1,20 @@
 use octets::{Octets, OctetsMut};
-use crate::{ReasonPhrase, Version, SUBSCRIBE_DONE_CONTROL_MESSAGE_ID};
+use crate::{ReasonPhrase, Version, PUBLISH_DONE_MESSAGE_ID};
 use crate::control_message::ControlMessage;
 
 #[allow(unused)]
 #[derive(Debug)]
-pub struct SubscribeDoneMessage {
+/// Called SUBSCRIBE_DONE before draft-13
+/// Called PUBLISH_DONE since draft-14
+pub struct PublishDoneMessage {
     request_id: u64,
     status_code: u64,
     stream_count: u64,
     error_reason: ReasonPhrase,
 }
 
-impl ControlMessage for SubscribeDoneMessage {
-    const MESSAGE_IDS: &'static [u64] = &[SUBSCRIBE_DONE_CONTROL_MESSAGE_ID];
+impl ControlMessage for PublishDoneMessage {
+    const MESSAGE_IDS: &'static [u64] = &[PUBLISH_DONE_MESSAGE_ID];
 
     fn to_body_bytes(&self, b: &mut OctetsMut, _version: Version) -> crate::error::Result<()> {
         b.put_varint(self.request_id)?;

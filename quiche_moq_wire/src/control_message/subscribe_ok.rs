@@ -1,5 +1,5 @@
 use crate::bytes::{FromBytes, ToBytes};
-use crate::{Parameters, RequestId, TrackAlias, Version, MOQ_VERSION_DRAFT_07, MOQ_VERSION_DRAFT_11, MOQ_VERSION_DRAFT_12, MOQ_VERSION_DRAFT_13, SUBSCRIBE_OK_CONTROL_MESSAGE_ID};
+use crate::{Parameters, RequestId, TrackAlias, Version, MOQ_VERSION_DRAFT_07, MOQ_VERSION_DRAFT_11, MOQ_VERSION_DRAFT_12, MOQ_VERSION_DRAFT_13, SUBSCRIBE_OK_MESSAGE_ID};
 use octets::{Octets, OctetsMut};
 use crate::control_message::ControlMessage;
 use crate::control_message::subscribe::SubscribeMessage;
@@ -42,7 +42,7 @@ impl SubscribeOkMessage {
 }
 
 impl ControlMessage for SubscribeOkMessage {
-    const MESSAGE_IDS: &'static [u64] = &[SUBSCRIBE_OK_CONTROL_MESSAGE_ID];
+    const MESSAGE_IDS: &'static [u64] = &[SUBSCRIBE_OK_MESSAGE_ID];
 
     fn to_body_bytes(&self, b: &mut OctetsMut, version: Version) -> crate::error::Result<()> {
         b.put_varint(self.request_id)?;

@@ -1,6 +1,6 @@
 use crate::bytes::{FromBytes, ToBytes};
 use crate::error::Result;
-use crate::{Parameters, RequestId, Version, ANNOUNCE_CONTROL_MESSAGE_ID, MOQ_VERSION_DRAFT_07, MOQ_VERSION_DRAFT_10, MOQ_VERSION_DRAFT_11, MOQ_VERSION_DRAFT_13};
+use crate::{Parameters, RequestId, Version, PUBLISH_NAMESPACE_MESSAGE_ID, MOQ_VERSION_DRAFT_07, MOQ_VERSION_DRAFT_10, MOQ_VERSION_DRAFT_11, MOQ_VERSION_DRAFT_13};
 use octets::{Octets, OctetsMut};
 use crate::control_message::ControlMessage;
 use crate::namespace::Namespace;
@@ -37,7 +37,7 @@ impl PublishNamespaceMessage {
 }
 
 impl ControlMessage for PublishNamespaceMessage {
-    const MESSAGE_IDS: &'static [u64] = &[ANNOUNCE_CONTROL_MESSAGE_ID];
+    const MESSAGE_IDS: &'static [u64] = &[PUBLISH_NAMESPACE_MESSAGE_ID];
 
     fn to_body_bytes(&self, b: &mut OctetsMut, version: Version) -> Result<()> {
         match version {

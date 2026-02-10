@@ -1,5 +1,5 @@
 use crate::bytes::{FromBytes, ToBytes};
-use crate::{SetupParameters, Version, MOQ_VERSION_DRAFT_07, MOQ_VERSION_DRAFT_10, MOQ_VERSION_DRAFT_11, MOQ_VERSION_DRAFT_13, SERVER_SETUP_CONTROL_MESSAGE_ID, SERVER_SETUP_CONTROL_MESSAGE_ID_VERSION_UNTIL_10};
+use crate::{SetupParameters, Version, MOQ_VERSION_DRAFT_07, MOQ_VERSION_DRAFT_10, MOQ_VERSION_DRAFT_11, MOQ_VERSION_DRAFT_13, SERVER_SETUP_MESSAGE_ID, SERVER_SETUP_MESSAGE_ID_VERSION_UNTIL_10};
 use octets::{Octets, OctetsMut};
 use crate::control_message::ControlMessage;
 
@@ -20,14 +20,14 @@ impl ServerSetupMessage {
 
 impl ControlMessage for ServerSetupMessage {
     const MESSAGE_IDS: &'static [u64] = &[
-        SERVER_SETUP_CONTROL_MESSAGE_ID_VERSION_UNTIL_10,
-        SERVER_SETUP_CONTROL_MESSAGE_ID,
+        SERVER_SETUP_MESSAGE_ID_VERSION_UNTIL_10,
+        SERVER_SETUP_MESSAGE_ID,
     ];
 
     fn message_id_for_version(version: Version) -> u64 {
         match version {
-            MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_10 => SERVER_SETUP_CONTROL_MESSAGE_ID_VERSION_UNTIL_10,
-            MOQ_VERSION_DRAFT_11..=MOQ_VERSION_DRAFT_13 => SERVER_SETUP_CONTROL_MESSAGE_ID,
+            MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_10 => SERVER_SETUP_MESSAGE_ID_VERSION_UNTIL_10,
+            MOQ_VERSION_DRAFT_11..=MOQ_VERSION_DRAFT_13 => SERVER_SETUP_MESSAGE_ID,
             _ => unimplemented!()
         }
     }

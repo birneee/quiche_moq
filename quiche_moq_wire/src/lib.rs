@@ -40,26 +40,73 @@ pub const MOQ_VERSION_DRAFT_10: u64 = 0xff00000a;
 pub const MOQ_VERSION_DRAFT_11: u64 = 0xff00000b;
 pub const MOQ_VERSION_DRAFT_12: u64 = 0xff00000c;
 pub const MOQ_VERSION_DRAFT_13: u64 = 0xff00000d;
+pub const MOQ_VERSION_DRAFT_14: u64 = 0xff00000e;
+pub const MOQ_VERSION_DRAFT_15: u64 = 0xff00000f;
+pub const MOQ_VERSION_DRAFT_16: u64 = 0xff000010;
 pub const MOQ_VERSION_LITE_01_BY_KIXELATED: u64 = 0xff0dad01;
 
-// https://www.ietf.org/archive/id/draft-ietf-moq-transport-13.html#name-control-messages
+// Control Message IDs (draft-16)
+// https://www.ietf.org/archive/id/draft-ietf-moq-transport-16.html#name-control-messages
 
-pub const CLIENT_SETUP_CONTROL_MESSAGE_ID: u64 = 0x20;
-pub const SERVER_SETUP_CONTROL_MESSAGE_ID: u64 = 0x21;
-pub const SUBSCRIBE_CONTROL_MESSAGE_ID: u64 = 0x3;
-pub const SUBSCRIBE_OK_CONTROL_MESSAGE_ID: u64 = 0x4;
-pub const SUBSCRIBE_ERROR_CONTROL_MESSAGE_ID: u64 = 0x5;
-/// Called ANNOUNCE until draft-13.
-/// Called PUBLISH_NAMESPACE since draft-14.
-pub const ANNOUNCE_CONTROL_MESSAGE_ID: u64 = 0x6;
-pub const ANNOUNCE_OK_CONTROL_MESSAGE_ID: u64 = 0x7;
-pub const TRACK_STATUS_CONTROL_MESSAGE_ID: u64 = 0xE;
+pub const CLIENT_SETUP_MESSAGE_ID: u64 = 0x20;
+pub const SERVER_SETUP_MESSAGE_ID: u64 = 0x21;
+/// 0x40 in drafts <= 10
+pub const CLIENT_SETUP_MESSAGE_ID_VERSION_UNTIL_10: u64 = 0x40;
+/// 0x41 in drafts <= 10
+pub const SERVER_SETUP_MESSAGE_ID_VERSION_UNTIL_10: u64 = 0x41;
+
+pub const SUBSCRIBE_MESSAGE_ID: u64 = 0x03;
+pub const SUBSCRIBE_OK_MESSAGE_ID: u64 = 0x04;
+/// REQUEST_ERROR in draft-15+, SUBSCRIBE_ERROR in drafts <= 14
+pub const REQUEST_ERROR_MESSAGE_ID: u64 = 0x05;
+/// REQUEST_UPDATE in draft-16, SUBSCRIBE_UPDATE in drafts <= 15
+pub const REQUEST_UPDATE_MESSAGE_ID: u64 = 0x02;
+pub const UNSUBSCRIBE_MESSAGE_ID: u64 = 0x0A;
+
+pub const PUBLISH_MESSAGE_ID: u64 = 0x1D;
+pub const PUBLISH_OK_MESSAGE_ID: u64 = 0x1E;
+/// PUBLISH_ERROR in draft-14 only
+pub const PUBLISH_ERROR_MESSAGE_ID: u64 = 0x1F;
+/// PUBLISH_DONE in draft-14+, SUBSCRIBE_DONE in drafts <= 13
+pub const PUBLISH_DONE_MESSAGE_ID: u64 = 0x0B;
+
+/// PUBLISH_NAMESPACE in draft-14+, ANNOUNCE in drafts <= 13
+pub const PUBLISH_NAMESPACE_MESSAGE_ID: u64 = 0x06;
+/// REQUEST_OK in draft-15+, PUBLISH_NAMESPACE_OK in draft-14, ANNOUNCE_OK in drafts <= 13
+pub const REQUEST_OK_MESSAGE_ID: u64 = 0x07;
+/// NAMESPACE in draft-16, PUBLISH_NAMESPACE_ERROR in draft-14, ANNOUNCE_ERROR in drafts <= 13
+pub const NAMESPACE_MESSAGE_ID: u64 = 0x08;
+/// UNANNOUNCE in drafts <= 13
+pub const PUBLISH_NAMESPACE_DONE_MESSAGE_ID: u64 = 0x09;
+/// ANNOUNCE_CANCEL in drafts <= 13
+pub const PUBLISH_NAMESPACE_CANCEL_MESSAGE_ID: u64 = 0x0C;
+/// NAMESPACE_DONE in draft-16, TRACK_STATUS_OK in draft-13/14, TRACK_STATUS in draft-07
+pub const NAMESPACE_DONE_MESSAGE_ID: u64 = 0x0E;
+
+/// TRACK_STATUS_REQUEST in draft-07
+pub const TRACK_STATUS_MESSAGE_ID: u64 = 0x0D;
+/// TRACK_STATUS_ERROR in drafts 13-14
+pub const TRACK_STATUS_ERROR_MESSAGE_ID: u64 = 0x0F;
+
+pub const GOAWAY_MESSAGE_ID: u64 = 0x10;
+/// MAX_SUBSCRIBE_ID in draft-07
+pub const MAX_REQUEST_ID_MESSAGE_ID: u64 = 0x15;
+pub const REQUESTS_BLOCKED_MESSAGE_ID: u64 = 0x1A;
+
+pub const FETCH_MESSAGE_ID: u64 = 0x16;
+pub const FETCH_OK_MESSAGE_ID: u64 = 0x18;
+pub const FETCH_CANCEL_MESSAGE_ID: u64 = 0x17;
+/// FETCH_ERROR in drafts 13-14
+pub const FETCH_ERROR_MESSAGE_ID: u64 = 0x19;
+
+/// SUBSCRIBE_ANNOUNCES in draft-07
+pub const SUBSCRIBE_NAMESPACE_MESSAGE_ID: u64 = 0x11;
+/// SUBSCRIBE_NAMESPACE_OK in drafts 13-14
+pub const SUBSCRIBE_NAMESPACE_OK_MESSAGE_ID: u64 = 0x12;
+/// SUBSCRIBE_NAMESPACE_ERROR in drafts 13-14
+pub const SUBSCRIBE_NAMESPACE_ERROR_MESSAGE_ID: u64 = 0x13;
+/// UNSUBSCRIBE_ANNOUNCES in draft-07
 pub const UNSUBSCRIBE_NAMESPACE_MESSAGE_ID: u64 = 0x14;
-pub const REQUEST_BLOCKED_CONTROL_MESSAGE_ID: u64 = 0x1A;
-pub const SUBSCRIBE_DONE_CONTROL_MESSAGE_ID: u64 = 0xB;
-pub const PUBLISH_OK_CONTROL_MESSAGE_ID: u64 = 0x1E;
-pub const CLIENT_SETUP_CONTROL_MESSAGE_ID_VERSION_UNTIL_10: u64 = 0x40;
-pub const SERVER_SETUP_CONTROL_MESSAGE_ID_VERSION_UNTIL_10: u64 = 0x41;
 
 /// https://www.rfc-editor.org/rfc/rfc9000#name-variable-length-integer-enc
 pub const MAX_VARINT_LEN: usize = 8;

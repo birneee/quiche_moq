@@ -14,7 +14,7 @@ use short_buf::ShortBuf;
 use smallvec::SmallVec;
 use std::collections::{HashMap, HashSet};
 use quiche_moq_wire::{FromBytes, Namespace, NamespaceTrackname, Parameters, RequestId, Role, SetupParameters, ToBytes, TrackAlias, Tuple, Version, DEFAULT_MAX_REQUEST_ID_SETUP_PARAMETER, MOQ_VERSION_DRAFT_07, MOQ_VERSION_DRAFT_11, MOQ_VERSION_DRAFT_12, MOQ_VERSION_DRAFT_13, PROTOCOL_VIOLATION, RESET_STREAM_CODE_DELIVERY_TIMEOUT};
-use quiche_moq_wire::control_message::{PublishNamespaceMessage, ClientSetupMessage, ControlMessageEnum, ServerSetupMessage, SubscribeErrorMessage, SubscribeOkMessage, PublishOkMessage};
+use quiche_moq_wire::control_message::{PublishNamespaceMessage, ClientSetupMessage, ControlMessageEnum, ServerSetupMessage, RequestErrorMessage, SubscribeOkMessage, PublishOkMessage};
 use quiche_moq_wire::control_message::subscribe::{FilterType, SubscribeMessage};
 use quiche_moq_wire::object::ObjectHeader;
 use quiche_utils::stream_id::StreamID;
@@ -49,7 +49,7 @@ pub struct MoqTransportSession {
     /// Subscribe requests the peer has not responded to.
     pending_subscribe: HashMap<RequestId, PendingSubscribe>,
     /// Received subscribe responses not yet polled by upper layer
-    pending_subscribe_responses: HashMap<RequestId, core::result::Result<(TrackAlias, SubscribeOkMessage), SubscribeErrorMessage>>,
+    pending_subscribe_responses: HashMap<RequestId, core::result::Result<(TrackAlias, SubscribeOkMessage), RequestErrorMessage>>,
     /// Streams that cannot be associated with a track yet because the SUBSCRIBE_OK is not received yet.
     /// https://datatracker.ietf.org/doc/html/draft-ietf-moq-transport-13#name-subgroup-header
     pending_streams: HashMap<TrackAlias, StreamID>,
@@ -266,7 +266,7 @@ impl MoqTransportSession {
                             .max_request_id
                             .unwrap_or(DEFAULT_MAX_REQUEST_ID_SETUP_PARAMETER);
                     }
-                    ControlMessageEnum::RequestBlocked(cm) => {
+                    ControlMessageEnum::RequestsBlocked(cm) => {
                         error!("{:?}", cm)
                     }
                     ControlMessageEnum::SubscribeOk(cm) => {
@@ -287,13 +287,13 @@ impl MoqTransportSession {
                         }
                         self.pending_subscribe_responses.insert(req_id, Ok((track_alias, cm)));
                     }
-                    ControlMessageEnum::SubscribeError(cm) => {
+                    ControlMessageEnum::RequestError(cm) => {
                         error!("{:?}", cm);
                         let req_id = cm.request_id();
                         let _req = self.pending_subscribe.remove(&req_id).unwrap();
                         self.pending_subscribe_responses.insert(req_id, Err(cm));
                     }
-                    ControlMessageEnum::SubscribeDone(_cm) => {}
+                    ControlMessageEnum::PublishDone(_cm) => {}
                     ControlMessageEnum::PublishNamespace(cm) => {
                         let request_id = cm.request_id().unwrap(); //todo
                         assert!(request_id <= self.out_max_request_id, "INVALID_REQUEST_ID");
@@ -325,7 +325,7 @@ impl MoqTransportSession {
                         self.pending_received_subscriptions
                             .insert(cm.request_id, cm);
                     }
-                    ControlMessageEnum::AnnounceOk(_cm) => {
+                    ControlMessageEnum::RequestOk(_cm) => {
                         // todo relate to announce and make info available to application
                     }
                     ControlMessageEnum::PublishOk(cm) => {
@@ -627,7 +627,7 @@ impl MoqTransportSession {
         trace!("timeout stream {}", stream_id);
     }
 
-    pub fn poll_subscribe_response(&mut self, request_id: RequestId) -> Option<core::result::Result<(TrackAlias, SubscribeOkMessage), SubscribeErrorMessage>> {
+    pub fn poll_subscribe_response(&mut self, request_id: RequestId) -> Option<core::result::Result<(TrackAlias, SubscribeOkMessage), RequestErrorMessage>> {
         self.pending_subscribe_responses.remove(&request_id)
     }
 

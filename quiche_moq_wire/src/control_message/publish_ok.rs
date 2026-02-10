@@ -1,5 +1,5 @@
 use octets::{Octets, OctetsMut};
-use crate::{FromBytes, Parameters, RequestId, ToBytes, Version, PUBLISH_OK_CONTROL_MESSAGE_ID};
+use crate::{FromBytes, Parameters, RequestId, ToBytes, Version, PUBLISH_OK_MESSAGE_ID};
 use crate::control_message::ControlMessage;
 use crate::Result;
 
@@ -27,7 +27,7 @@ impl PublishOkMessage {
 }
 
 impl ControlMessage for PublishOkMessage {
-    const MESSAGE_IDS: &'static [u64] = &[PUBLISH_OK_CONTROL_MESSAGE_ID];
+    const MESSAGE_IDS: &'static [u64] = &[PUBLISH_OK_MESSAGE_ID];
 
     fn to_body_bytes(&self, b: &mut OctetsMut, version: Version) -> crate::Result<()> {
         b.put_u16(self.request_id as u16)?;

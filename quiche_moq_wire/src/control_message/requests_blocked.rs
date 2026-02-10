@@ -1,14 +1,16 @@
 use octets::{Octets, OctetsMut};
-use crate::{RequestId, Version, REQUEST_BLOCKED_CONTROL_MESSAGE_ID};
+use crate::{RequestId, Version, REQUESTS_BLOCKED_MESSAGE_ID};
 use crate::control_message::ControlMessage;
 
 #[derive(Debug)]
-pub struct RequestBlockedMessage {
+/// Called REQUEST_BLOCKED before draft-13
+/// Called REQUESTS_BLOCKED since draft-14
+pub struct RequestsBlockedMessage {
     pub maximum_request_id: RequestId,
 }
 
-impl ControlMessage for RequestBlockedMessage {
-    const MESSAGE_IDS: &'static [u64] = &[REQUEST_BLOCKED_CONTROL_MESSAGE_ID];
+impl ControlMessage for RequestsBlockedMessage {
+    const MESSAGE_IDS: &'static [u64] = &[REQUESTS_BLOCKED_MESSAGE_ID];
 
     fn to_body_bytes(&self, b: &mut OctetsMut, _version: Version) -> crate::error::Result<()> {
         b.put_varint(self.maximum_request_id)?;

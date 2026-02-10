@@ -1,6 +1,6 @@
 use crate::bytes::{FromBytes, ToBytes};
 use crate::error::Error;
-use crate::{Namespace, NamespaceTrackname, Parameters, RequestId, TrackAlias, Version, ABSOLUTE_RANGE_FILTER_ID, ABSOLUTE_START_FILTER_ID, LARGEST_OBJECT_FILTER_ID, MAX_FULL_TRACK_NAME_LEN, MAX_TRACK_NAMESPACE_TUPLE_LENGTH, MIN_TRACK_NAMESPACE_TUPLE_LENGTH, MOQ_VERSION_DRAFT_07, MOQ_VERSION_DRAFT_10, MOQ_VERSION_DRAFT_11, MOQ_VERSION_DRAFT_12, MOQ_VERSION_DRAFT_13, NEXT_GROUP_START_FILTER_ID, SUBSCRIBE_CONTROL_MESSAGE_ID};
+use crate::{Namespace, NamespaceTrackname, Parameters, RequestId, TrackAlias, Version, ABSOLUTE_RANGE_FILTER_ID, ABSOLUTE_START_FILTER_ID, LARGEST_OBJECT_FILTER_ID, MAX_FULL_TRACK_NAME_LEN, MAX_TRACK_NAMESPACE_TUPLE_LENGTH, MIN_TRACK_NAMESPACE_TUPLE_LENGTH, MOQ_VERSION_DRAFT_07, MOQ_VERSION_DRAFT_10, MOQ_VERSION_DRAFT_11, MOQ_VERSION_DRAFT_12, MOQ_VERSION_DRAFT_13, NEXT_GROUP_START_FILTER_ID, SUBSCRIBE_MESSAGE_ID};
 use octets::{Octets, OctetsMut};
 use crate::control_message::ControlMessage;
 use crate::location::Location;
@@ -50,7 +50,7 @@ impl SubscribeMessage {
 }
 
 impl ControlMessage for SubscribeMessage {
-    const MESSAGE_IDS: &'static [u64] = &[SUBSCRIBE_CONTROL_MESSAGE_ID];
+    const MESSAGE_IDS: &'static [u64] = &[SUBSCRIBE_MESSAGE_ID];
 
     fn to_body_bytes(&self, b: &mut OctetsMut, version: Version) -> crate::error::Result<()> {
         self.validate()?;
