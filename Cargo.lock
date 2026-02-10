@@ -1086,6 +1086,7 @@ dependencies = [
  "quiche_mio_runner",
  "quiche_moq",
  "quiche_webtransport",
+ "smallvec 2.0.0-alpha.12",
  "url",
 ]
 

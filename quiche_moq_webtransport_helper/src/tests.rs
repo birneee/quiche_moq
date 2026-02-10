@@ -8,7 +8,7 @@ use runner::Runner;
 use quiche_mio_runner as runner;
 use quiche_mio_runner::quiche_endpoint::{Endpoint, EndpointConfig, ServerConfig};
 use quiche_mio_runner::{mio, Socket};
-use crate::{MoqWebTransportHelper, State};
+use crate::MoqWebTransportHelper;
 use quiche_moq as moq;
 use quiche_moq::wire::{RequestId, TrackAlias};
 
@@ -66,33 +66,27 @@ fn handshake() {
                 c.post_handle_recvs = |r| {
                     'conn: for icid in &mut r.endpoint.conn_index_iter() {
                         let Some(conn) = r.endpoint.conn_mut(icid) else { continue };
-                        let quic_conn = &mut conn.conn;
-                        conn.app_data.moq_helper.on_post_handle_recvs(quic_conn);
-                        let State::Moq {
-                            moq_session,
-                            h3_conn,
-                            wt_conn,
-                            ..
-                        } = &mut conn.app_data.moq_helper.state else {
+                        conn.app_data.moq_helper.on_post_handle_recvs(&mut conn.conn);
+                        let Some(moq) = conn.app_data.moq_helper.moq_handle(&mut conn.conn) else {
                             continue 'conn;
                         };
                         if !conn.app_data.subscribed {
                             let name = "meeting--video".parse().unwrap();
-                            conn.app_data.request_id = Some(moq_session.subscribe(&mut conn.conn, wt_conn, &name).unwrap());
+                            conn.app_data.request_id = Some(moq.subscribe(&name).unwrap());
                             info!("subscribe {}", name);
                             conn.app_data.subscribed = true;
                         }
-                        if let Some(request_id) = conn.app_data.request_id && let Some(resp) = moq_session.poll_subscribe_response(request_id) {
+                        if let Some(request_id) = conn.app_data.request_id && let Some(resp) = moq.poll_subscribe_response(request_id) {
                             conn.app_data.track_alias = Some(resp.unwrap().0)
                         }
                         if let Some(track_alias) = conn.app_data.track_alias {
-                            let hdr = match moq_session.read_obj_hdr(track_alias, wt_conn, h3_conn,  &mut conn.conn) {
+                            let hdr = match moq.read_obj_hdr(track_alias) {
                                 Ok(v) => v,
                                 Err(quiche_moq::Error::Done) => continue,
                                 Err(e) => unimplemented!("{:?}", e),
                             };
                             let mut buf = [0u8; 100];
-                            let n = moq_session.read_obj_pld(&mut buf, track_alias, wt_conn, h3_conn,  &mut conn.conn).unwrap();
+                            let n = moq.read_obj_pld(&mut buf, track_alias).unwrap();
                             assert_eq!(n, hdr.payload_len());
                             info!("recv obj: {}", str::from_utf8(&buf[..n]).unwrap());
                             conn.app_data.recv_obj_count += 1;
@@ -139,25 +133,20 @@ fn handshake() {
                 c.post_handle_recvs = |r| {
                     'conn: for icid in &mut r.endpoint.conn_index_iter() {
                         let Some(conn) = r.endpoint.conn_mut(icid) else { continue };
-                        let quic_conn = &mut conn.conn;
-                        conn.app_data.moq_helper.on_post_handle_recvs(quic_conn);
-                        let State::Moq {
-                            wt_conn,
-                            h3_conn,
-                            moq_session, ..
-                        } = &mut conn.app_data.moq_helper.state else {
+                        conn.app_data.moq_helper.on_post_handle_recvs(&mut conn.conn);
+                        let Some(moq) = conn.app_data.moq_helper.moq_handle(&mut conn.conn) else {
                             continue 'conn;
                         };
 
-                        while let Some(request_id) = moq_session.next_pending_received_subscription() {
-                            let subscription = moq_session.pending_received_subscription(request_id);
+                        while let Some(request_id) = moq.next_pending_received_subscription() {
+                            let subscription = moq.pending_received_subscription(request_id);
                             if subscription.namespace_trackname != "meeting--video".parse().unwrap() {
                                 unreachable!()
                             }
                             info!("accept track {}", subscription.namespace_trackname);
-                            let track_alias = moq_session.accept_subscription(&mut conn.conn, wt_conn, request_id);
+                            let track_alias = moq.accept_subscription(request_id);
                             let buf = b"hello";
-                            moq_session.send_obj(buf, track_alias, wt_conn, h3_conn, &mut conn.conn).unwrap();
+                            moq.send_obj(buf, track_alias).unwrap();
                             info!("send obj: {}", str::from_utf8(buf).unwrap())
                         }
                     }

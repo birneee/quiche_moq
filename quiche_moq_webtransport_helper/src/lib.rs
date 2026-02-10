@@ -1,5 +1,8 @@
 #[cfg(test)]
 mod tests;
+mod moq_handle;
+
+pub use moq_handle::MoqHandle;
 
 use quiche::h3;
 use quiche_moq as moq;
@@ -33,6 +36,25 @@ impl MoqWebTransportHelper {
             moq_config,
             perspective: Perspective::Server {}
         }
+    }
+
+    /// Returns a handle to the MoQ session if ready, None otherwise.
+    /// This bundles all connection references for ergonomic API calls.
+    pub fn moq_handle<'a>(&'a mut self, quic: &'a mut quiche::Connection) -> Option<MoqHandle<'a>> {
+        match &mut self.state {
+            State::Moq { moq_session, h3_conn, wt_conn } => Some(MoqHandle {
+                session: moq_session,
+                quic,
+                h3: h3_conn,
+                wt: wt_conn,
+            }),
+            _ => None,
+        }
+    }
+
+    /// Returns true if the MoQ session is ready for use
+    pub fn is_ready(&self) -> bool {
+        matches!(self.state, State::Moq { .. })
     }
 
     /// this function must be called when new quic packets have been received or the timeout fired
