@@ -27,9 +27,7 @@ impl PublishOkMessage {
 }
 
 impl ControlMessage for PublishOkMessage {
-    fn message_id() -> u64 {
-        PUBLISH_OK_CONTROL_MESSAGE_ID
-    }
+    const MESSAGE_IDS: &'static [u64] = &[PUBLISH_OK_CONTROL_MESSAGE_ID];
 
     fn to_body_bytes(&self, b: &mut OctetsMut, version: Version) -> crate::Result<()> {
         b.put_u16(self.request_id as u16)?;

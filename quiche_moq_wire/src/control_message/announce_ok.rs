@@ -1,8 +1,7 @@
-use crate::bytes::ToBytes;
-use crate::{FromBytes, RequestId, Version, ANNOUNCE_OK_CONTROL_MESSAGE_ID, MOQ_VERSION_DRAFT_07, MOQ_VERSION_DRAFT_10, MOQ_VERSION_DRAFT_11, MOQ_VERSION_DRAFT_13};
+use crate::bytes::{FromBytes, ToBytes};
+use crate::{RequestId, Version, ANNOUNCE_OK_CONTROL_MESSAGE_ID, MOQ_VERSION_DRAFT_07, MOQ_VERSION_DRAFT_10, MOQ_VERSION_DRAFT_11, MOQ_VERSION_DRAFT_13};
 use octets::{Octets, OctetsMut};
-use crate::control_message::encode_control_message;
-use crate::control_message::header::ControlMessageHeader;
+use crate::control_message::ControlMessage;
 use crate::namespace::Namespace;
 
 #[derive(Debug)]
@@ -17,27 +16,23 @@ impl AnnounceOkMessage {
     pub fn new(request_id: Option<RequestId>, track_namespace: Option<Namespace>) -> Self { AnnounceOkMessage { request_id, track_namespace } }
 }
 
-impl ToBytes for AnnounceOkMessage {
-    fn to_bytes(&self, b: &mut OctetsMut, version: Version) -> crate::error::Result<()> {
-        encode_control_message(ANNOUNCE_OK_CONTROL_MESSAGE_ID, version, b, |b| {
-            match version {
-                MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_10 => {
-                    self.track_namespace.as_ref().unwrap().to_bytes(b, version)?;
-                }
-                MOQ_VERSION_DRAFT_11..=MOQ_VERSION_DRAFT_13 => {
-                    b.put_varint(self.request_id.unwrap())?;
-                }
-                _ => unimplemented!()
-            }
-            Ok(())
-        })
-    }
-}
+impl ControlMessage for AnnounceOkMessage {
+    const MESSAGE_IDS: &'static [u64] = &[ANNOUNCE_OK_CONTROL_MESSAGE_ID];
 
-impl FromBytes for AnnounceOkMessage {
-    fn from_bytes(b: &mut Octets, version: Version) -> crate::Result<Self> {
-        let header = ControlMessageHeader::from_bytes(b, version)?;
-        assert_eq!(header.ty(), ANNOUNCE_OK_CONTROL_MESSAGE_ID);
+    fn to_body_bytes(&self, b: &mut OctetsMut, version: Version) -> crate::error::Result<()> {
+        match version {
+            MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_10 => {
+                self.track_namespace.as_ref().unwrap().to_bytes(b, version)?;
+            }
+            MOQ_VERSION_DRAFT_11..=MOQ_VERSION_DRAFT_13 => {
+                b.put_varint(self.request_id.unwrap())?;
+            }
+            _ => unimplemented!()
+        }
+        Ok(())
+    }
+
+    fn from_body_bytes(b: &mut Octets, version: Version) -> crate::error::Result<Self> {
         match version {
             MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_10 => {
                 let track_namespace = Some(Namespace::from_bytes(b, version)?);

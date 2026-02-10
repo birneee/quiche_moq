@@ -2,7 +2,7 @@ use crate::bytes::{FromBytes, ToBytes};
 use crate::error::Error;
 use crate::{Namespace, NamespaceTrackname, Parameters, RequestId, TrackAlias, Version, ABSOLUTE_RANGE_FILTER_ID, ABSOLUTE_START_FILTER_ID, LARGEST_OBJECT_FILTER_ID, MAX_FULL_TRACK_NAME_LEN, MAX_TRACK_NAMESPACE_TUPLE_LENGTH, MIN_TRACK_NAMESPACE_TUPLE_LENGTH, MOQ_VERSION_DRAFT_07, MOQ_VERSION_DRAFT_10, MOQ_VERSION_DRAFT_11, MOQ_VERSION_DRAFT_12, MOQ_VERSION_DRAFT_13, NEXT_GROUP_START_FILTER_ID, SUBSCRIBE_CONTROL_MESSAGE_ID};
 use octets::{Octets, OctetsMut};
-use crate::control_message::header::ControlMessageHeader;
+use crate::control_message::ControlMessage;
 use crate::location::Location;
 use crate::tuple::Tuple;
 
@@ -49,10 +49,43 @@ impl SubscribeMessage {
     }
 }
 
-impl FromBytes for SubscribeMessage {
-    fn from_bytes(b: &mut Octets, version: Version) -> crate::error::Result<Self> {
-        let header = ControlMessageHeader::from_bytes(b, version)?;
-        assert_eq!(header.ty(), SUBSCRIBE_CONTROL_MESSAGE_ID);
+impl ControlMessage for SubscribeMessage {
+    const MESSAGE_IDS: &'static [u64] = &[SUBSCRIBE_CONTROL_MESSAGE_ID];
+
+    fn to_body_bytes(&self, b: &mut OctetsMut, version: Version) -> crate::error::Result<()> {
+        self.validate()?;
+        b.put_varint(self.request_id)?;
+        match version {
+            MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_11 => { b.put_varint(self.track_alias.unwrap())?; },
+            MOQ_VERSION_DRAFT_12..=MOQ_VERSION_DRAFT_13 => {},
+            _ => unimplemented!()
+        };
+        b.put_varint(self.track_namespace().len() as u64)?;
+        for namespace in self.track_namespace() {
+            b.put_varint(namespace.len() as u64)?;
+            b.put_bytes(namespace)?;
+        }
+        b.put_varint(self.track_name().len() as u64)?;
+        b.put_bytes(self.track_name())?;
+        b.put_u8(self.subscriber_priority)?;
+        b.put_u8(self.group_order)?;
+        match version {
+            MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_10 => {},
+            MOQ_VERSION_DRAFT_11..=MOQ_VERSION_DRAFT_13 => { b.put_u8(self.forward.unwrap())?; },
+            _ => unimplemented!()
+        }
+        self.filter_type.to_bytes(b, version)?;
+        if self.filter_type.has_start_location() {
+            self.start_location.as_ref().unwrap().to_bytes(b, version)?;
+        }
+        if self.filter_type.has_end_group() {
+            b.put_varint(self.end_group.unwrap())?;
+        }
+        self.parameters.to_bytes(b, version)?;
+        Ok(())
+    }
+
+    fn from_body_bytes(b: &mut Octets, version: Version) -> crate::error::Result<Self> {
         let request_id = b.get_varint()?;
         let track_alias = match version {
             MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_11 => Some(b.get_varint()?),
@@ -93,45 +126,6 @@ impl FromBytes for SubscribeMessage {
             end_group,
             parameters,
         })
-    }
-}
-
-impl ToBytes for SubscribeMessage {
-    fn to_bytes(&self, b: &mut OctetsMut, version: Version) -> crate::error::Result<()> {
-        self.validate()?;
-        b.put_varint(SUBSCRIBE_CONTROL_MESSAGE_ID)?;
-        let len_off = b.off();
-        b.skip(2)?;
-        b.put_varint(self.request_id)?;
-        match version {
-            MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_11 => { b.put_varint(self.track_alias.unwrap())?; },
-            MOQ_VERSION_DRAFT_12..=MOQ_VERSION_DRAFT_13 => {},
-            _ => unimplemented!()
-        };
-        b.put_varint(self.track_namespace().len() as u64)?;
-        for namespace in self.track_namespace() {
-            b.put_varint(namespace.len() as u64)?;
-            b.put_bytes(namespace)?;
-        }
-        b.put_varint(self.track_name().len() as u64)?;
-        b.put_bytes(self.track_name())?;
-        b.put_u8(self.subscriber_priority)?;
-        b.put_u8(self.group_order)?;
-        match version {
-            MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_10 => {},
-            MOQ_VERSION_DRAFT_11..=MOQ_VERSION_DRAFT_13 => { b.put_u8(self.forward.unwrap())?; },
-            _ => unimplemented!()
-        }
-        self.filter_type.to_bytes(b, version)?;
-        if self.filter_type.has_start_location() {
-            self.start_location.as_ref().unwrap().to_bytes(b, version)?;
-        }
-        if self.filter_type.has_end_group() {
-            b.put_varint(self.end_group.unwrap())?;
-        }
-        self.parameters.to_bytes(b, version)?;
-        crate::control_message::set_control_message_length(b, len_off, version)?;
-        Ok(())
     }
 }
 

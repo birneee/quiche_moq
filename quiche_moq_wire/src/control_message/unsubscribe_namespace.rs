@@ -1,17 +1,20 @@
-use crate::bytes::FromBytes;
+use octets::{Octets, OctetsMut};
 use crate::{Version, UNSUBSCRIBE_NAMESPACE_MESSAGE_ID};
-use octets::Octets;
-use crate::control_message::header::ControlMessageHeader;
+use crate::control_message::ControlMessage;
 
 #[derive(Debug)]
 pub struct UnsubscribeNamespaceMessage {
 
 }
 
-impl FromBytes for UnsubscribeNamespaceMessage {
-    fn from_bytes(b: &mut Octets, version: Version) -> crate::error::Result<Self> {
-        let header = ControlMessageHeader::from_bytes(b, version)?;
-        assert_eq!(header.ty(), UNSUBSCRIBE_NAMESPACE_MESSAGE_ID);
+impl ControlMessage for UnsubscribeNamespaceMessage {
+    const MESSAGE_IDS: &'static [u64] = &[UNSUBSCRIBE_NAMESPACE_MESSAGE_ID];
+
+    fn to_body_bytes(&self, _b: &mut OctetsMut, _version: Version) -> crate::error::Result<()> {
+        todo!()
+    }
+
+    fn from_body_bytes(_b: &mut Octets, _version: Version) -> crate::error::Result<Self> {
         todo!()
     }
 }

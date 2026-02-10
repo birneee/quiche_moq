@@ -1,7 +1,6 @@
-use crate::bytes::FromBytes;
+use octets::{Octets, OctetsMut};
 use crate::{ReasonPhrase, RequestId, TrackAlias, Version, MOQ_VERSION_DRAFT_07, MOQ_VERSION_DRAFT_11, MOQ_VERSION_DRAFT_12, MOQ_VERSION_DRAFT_13, SUBSCRIBE_ERROR_CONTROL_MESSAGE_ID};
-use octets::Octets;
-use crate::control_message::header::ControlMessageHeader;
+use crate::control_message::ControlMessage;
 
 #[allow(unused)]
 #[derive(Debug)]
@@ -21,10 +20,24 @@ impl SubscribeErrorMessage {
     pub fn error_code(&self) -> u64 { self. error_code }
 }
 
-impl FromBytes for SubscribeErrorMessage {
-    fn from_bytes(b: &mut Octets, version: Version) -> crate::error::Result<Self> {
-        let header = ControlMessageHeader::from_bytes(b, version)?;
-        assert_eq!(header.ty(), SUBSCRIBE_ERROR_CONTROL_MESSAGE_ID);
+impl ControlMessage for SubscribeErrorMessage {
+    const MESSAGE_IDS: &'static [u64] = &[SUBSCRIBE_ERROR_CONTROL_MESSAGE_ID];
+
+    fn to_body_bytes(&self, b: &mut OctetsMut, version: Version) -> crate::error::Result<()> {
+        b.put_varint(self.request_id)?;
+        b.put_varint(self.error_code)?;
+        self.error_reason.to_bytes(b)?;
+        match version {
+            MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_11 => {
+                b.put_varint(self.track_alias.unwrap())?;
+            },
+            MOQ_VERSION_DRAFT_12..=MOQ_VERSION_DRAFT_13 => {},
+            _ => unimplemented!()
+        };
+        Ok(())
+    }
+
+    fn from_body_bytes(b: &mut Octets, version: Version) -> crate::error::Result<Self> {
         let request_id = b.get_varint()?;
         let error_code = b.get_varint()?;
         let error_reason = ReasonPhrase::from_bytes(b)?;

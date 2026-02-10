@@ -1,7 +1,7 @@
 use crate::bytes::{FromBytes, ToBytes};
 use crate::{SetupParameters, Version, CLIENT_SETUP_CONTROL_MESSAGE_ID, CLIENT_SETUP_CONTROL_MESSAGE_ID_VERSION_UNTIL_10, MOQ_VERSION_DRAFT_07, MOQ_VERSION_DRAFT_10, MOQ_VERSION_DRAFT_11, MOQ_VERSION_DRAFT_13};
 use octets::{Octets, OctetsMut};
-use crate::control_message::header::ControlMessageHeader;
+use crate::control_message::ControlMessage;
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct ClientSetupMessage {
@@ -9,46 +9,36 @@ pub struct ClientSetupMessage {
     pub setup_parameters: SetupParameters,
 }
 
-impl ToBytes for ClientSetupMessage {
-    fn to_bytes(&self, b: &mut OctetsMut, version: Version) -> crate::error::Result<()> {
+impl ControlMessage for ClientSetupMessage {
+    const MESSAGE_IDS: &'static [u64] = &[
+        CLIENT_SETUP_CONTROL_MESSAGE_ID_VERSION_UNTIL_10,
+        CLIENT_SETUP_CONTROL_MESSAGE_ID,
+    ];
+
+    fn message_id_for_version(version: Version) -> u64 {
         match version {
-            MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_10 => {
-                b.put_varint(CLIENT_SETUP_CONTROL_MESSAGE_ID_VERSION_UNTIL_10)?;
-            }
-            MOQ_VERSION_DRAFT_11..=MOQ_VERSION_DRAFT_13 => {
-                b.put_varint(CLIENT_SETUP_CONTROL_MESSAGE_ID)?;
-            }
+            MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_10 => CLIENT_SETUP_CONTROL_MESSAGE_ID_VERSION_UNTIL_10,
+            MOQ_VERSION_DRAFT_11..=MOQ_VERSION_DRAFT_13 => CLIENT_SETUP_CONTROL_MESSAGE_ID,
             _ => unimplemented!()
         }
-        let len_off = b.off();
-        b.skip(2)?;
+    }
+
+    fn to_body_bytes(&self, b: &mut OctetsMut, version: Version) -> crate::error::Result<()> {
         b.put_varint(self.supported_versions.len() as u64)?;
         for supported_version in &self.supported_versions {
             b.put_varint(*supported_version)?;
         }
         self.setup_parameters.to_bytes(b, version)?;
-        crate::control_message::set_control_message_length(b, len_off, version)?;
         Ok(())
     }
-}
 
-impl FromBytes for ClientSetupMessage {
-    fn from_bytes(b: &mut Octets, version: Version) -> crate::error::Result<Self> {
-        let header = ControlMessageHeader::from_bytes(b, version)?;
-        match version {
-            MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_10 => assert_eq!(header.ty(), CLIENT_SETUP_CONTROL_MESSAGE_ID_VERSION_UNTIL_10),
-            MOQ_VERSION_DRAFT_11..=MOQ_VERSION_DRAFT_13 => assert_eq!(header.ty(), CLIENT_SETUP_CONTROL_MESSAGE_ID),
-            _ => unimplemented!()
-        };
-        let start_off = b.off();
+    fn from_body_bytes(b: &mut Octets, version: Version) -> crate::error::Result<Self> {
         let num_supported_versions = b.get_varint()?;
         let mut supported_versions = Vec::with_capacity(num_supported_versions as usize);
         for _ in 0..num_supported_versions {
             supported_versions.push(b.get_varint()?);
         }
         let setup_parameters = SetupParameters::from_bytes(b, version)?;
-        let payload_len = b.off() - start_off;
-        assert_eq!(payload_len, header.len());
         Ok(Self{
             supported_versions,
             setup_parameters,

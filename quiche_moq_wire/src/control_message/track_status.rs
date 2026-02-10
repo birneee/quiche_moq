@@ -1,6 +1,6 @@
 use octets::{Octets, OctetsMut};
 use crate::{FromBytes, ToBytes, Version, TRACK_STATUS_CONTROL_MESSAGE_ID};
-use crate::control_message::header::ControlMessageHeader;
+use crate::control_message::ControlMessage;
 use crate::namespace::Namespace;
 
 #[allow(unused)]
@@ -13,10 +13,20 @@ pub struct TrackStatusMessage {
     last_object_id: u64,
 }
 
-impl FromBytes for TrackStatusMessage {
-    fn from_bytes(b: &mut Octets, version: Version) -> crate::Result<Self> {
-        let header = ControlMessageHeader::from_bytes(b, version)?;
-        assert_eq!(header.ty(), TRACK_STATUS_CONTROL_MESSAGE_ID);
+impl ControlMessage for TrackStatusMessage {
+    const MESSAGE_IDS: &'static [u64] = &[TRACK_STATUS_CONTROL_MESSAGE_ID];
+
+    fn to_body_bytes(&self, b: &mut OctetsMut, version: Version) -> crate::error::Result<()> {
+        self.track_namespace.to_bytes(b, version)?;
+        b.put_varint(self.track_name.len() as u64)?;
+        b.put_bytes(&self.track_name)?;
+        b.put_varint(self.status_code)?;
+        b.put_varint(self.last_group_id)?;
+        b.put_varint(self.last_object_id)?;
+        Ok(())
+    }
+
+    fn from_body_bytes(b: &mut Octets, version: Version) -> crate::error::Result<Self> {
         let track_namespace = Namespace::from_bytes(b, version)?;
         let track_name_length = b.get_varint()?;
         let track_name = b.get_bytes(track_name_length as usize)?.to_vec();
@@ -30,11 +40,5 @@ impl FromBytes for TrackStatusMessage {
             last_group_id,
             last_object_id,
         })
-    }
-}
-
-impl ToBytes for TrackStatusMessage {
-    fn to_bytes(&self, _b: &mut OctetsMut, _version: Version) -> crate::Result<()> {
-        todo!()
     }
 }

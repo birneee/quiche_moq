@@ -1,5 +1,6 @@
-use crate::{ReasonPhrase, Version};
-use octets::Octets;
+use octets::{Octets, OctetsMut};
+use crate::{ReasonPhrase, Version, SUBSCRIBE_DONE_CONTROL_MESSAGE_ID};
+use crate::control_message::ControlMessage;
 
 #[allow(unused)]
 #[derive(Debug)]
@@ -10,9 +11,18 @@ pub struct SubscribeDoneMessage {
     error_reason: ReasonPhrase,
 }
 
-impl SubscribeDoneMessage {
-    pub fn from_bytes(b: &mut Octets, _version: Version) -> crate::error::Result<Self> {
-        //todo!("parse header")
+impl ControlMessage for SubscribeDoneMessage {
+    const MESSAGE_IDS: &'static [u64] = &[SUBSCRIBE_DONE_CONTROL_MESSAGE_ID];
+
+    fn to_body_bytes(&self, b: &mut OctetsMut, _version: Version) -> crate::error::Result<()> {
+        b.put_varint(self.request_id)?;
+        b.put_varint(self.status_code)?;
+        b.put_varint(self.stream_count)?;
+        self.error_reason.to_bytes(b)?;
+        Ok(())
+    }
+
+    fn from_body_bytes(b: &mut Octets, _version: Version) -> crate::error::Result<Self> {
         let request_id = b.get_varint()?;
         let status_code = b.get_varint()?;
         let stream_count = b.get_varint()?;

@@ -11,12 +11,6 @@ impl ControlMessageHeader {
     pub(crate) fn ty(&self) -> u64 {
         self.ty
     }
-
-    pub(crate) fn len(&self) -> usize { self.len }
-
-    pub fn payload_length(&self) -> usize {
-        self.len
-    }
 }
 
 impl FromBytes for ControlMessageHeader {

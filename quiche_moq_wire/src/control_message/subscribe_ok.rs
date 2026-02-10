@@ -1,8 +1,7 @@
 use crate::bytes::{FromBytes, ToBytes};
-use crate::control_message::set_control_message_length;
 use crate::{Parameters, RequestId, TrackAlias, Version, MOQ_VERSION_DRAFT_07, MOQ_VERSION_DRAFT_11, MOQ_VERSION_DRAFT_12, MOQ_VERSION_DRAFT_13, SUBSCRIBE_OK_CONTROL_MESSAGE_ID};
 use octets::{Octets, OctetsMut};
-use crate::control_message::header::ControlMessageHeader;
+use crate::control_message::ControlMessage;
 use crate::control_message::subscribe::SubscribeMessage;
 use crate::error::Error;
 use crate::location::Location;
@@ -42,11 +41,31 @@ impl SubscribeOkMessage {
     }
 }
 
-impl FromBytes for SubscribeOkMessage {
-    fn from_bytes(b: &mut Octets, version: Version) -> crate::error::Result<Self> {
-        let header = ControlMessageHeader::from_bytes(b, version)?;
-        assert_eq!(header.ty(), SUBSCRIBE_OK_CONTROL_MESSAGE_ID);
-        assert!(b.cap() >= header.len());
+impl ControlMessage for SubscribeOkMessage {
+    const MESSAGE_IDS: &'static [u64] = &[SUBSCRIBE_OK_CONTROL_MESSAGE_ID];
+
+    fn to_body_bytes(&self, b: &mut OctetsMut, version: Version) -> crate::error::Result<()> {
+        b.put_varint(self.request_id)?;
+        match version {
+            MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_11 => {}, //no track alias
+            MOQ_VERSION_DRAFT_12..=MOQ_VERSION_DRAFT_13 => {
+                b.put_varint(self.track_alias.unwrap())?;
+            },
+            _ => unimplemented!()
+        }
+        b.put_varint(self.expires)?;
+        self.group_order.to_bytes(b, version)?;
+        if let Some(location) = &self.largest_location {
+            b.put_u8(1)?;
+            location.to_bytes(b, version)?;
+        } else {
+            b.put_u8(0)?;
+        }
+        self.parameters.to_bytes(b, version)?;
+        Ok(())
+    }
+
+    fn from_body_bytes(b: &mut Octets, version: Version) -> crate::error::Result<Self> {
         let request_id = b.get_varint()?;
         let track_alias = match version {
             MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_11 => None,
@@ -71,33 +90,6 @@ impl FromBytes for SubscribeOkMessage {
             largest_location,
             parameters,
         })
-    }
-}
-
-impl ToBytes for SubscribeOkMessage {
-    fn to_bytes(&self, b: &mut OctetsMut, version: Version) -> crate::error::Result<()> {
-        b.put_varint(SUBSCRIBE_OK_CONTROL_MESSAGE_ID)?;
-        let len_off = b.off();
-        b.skip(2)?;
-        b.put_varint(self.request_id)?;
-        match version {
-            MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_11 => {}, //no track alias
-            MOQ_VERSION_DRAFT_12..=MOQ_VERSION_DRAFT_13 => {
-                b.put_varint(self.track_alias.unwrap())?;
-            },
-            _ => unimplemented!()
-        }
-        b.put_varint(self.expires)?;
-        self.group_order.to_bytes(b, version)?;
-        if let Some(location) = &self.largest_location {
-            b.put_u8(1)?;
-            location.to_bytes(b, version)?;
-        } else {
-            b.put_u8(0)?;
-        }
-        self.parameters.to_bytes(b, version)?;
-        set_control_message_length(b, len_off, version)?;
-        Ok(())
     }
 }
 

@@ -1,8 +1,7 @@
 use crate::bytes::{FromBytes, ToBytes};
 use crate::{SetupParameters, Version, MOQ_VERSION_DRAFT_07, MOQ_VERSION_DRAFT_10, MOQ_VERSION_DRAFT_11, MOQ_VERSION_DRAFT_13, SERVER_SETUP_CONTROL_MESSAGE_ID, SERVER_SETUP_CONTROL_MESSAGE_ID_VERSION_UNTIL_10};
 use octets::{Octets, OctetsMut};
-use crate::control_message::encode_control_message;
-use crate::control_message::header::ControlMessageHeader;
+use crate::control_message::ControlMessage;
 
 #[derive(Debug)]
 pub struct ServerSetupMessage {
@@ -19,35 +18,27 @@ impl ServerSetupMessage {
     }
 }
 
-impl ToBytes for ServerSetupMessage {
-    fn to_bytes(&self, b: &mut OctetsMut, version: Version) -> crate::error::Result<()> {
-        let ty = match version {
+impl ControlMessage for ServerSetupMessage {
+    const MESSAGE_IDS: &'static [u64] = &[
+        SERVER_SETUP_CONTROL_MESSAGE_ID_VERSION_UNTIL_10,
+        SERVER_SETUP_CONTROL_MESSAGE_ID,
+    ];
+
+    fn message_id_for_version(version: Version) -> u64 {
+        match version {
             MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_10 => SERVER_SETUP_CONTROL_MESSAGE_ID_VERSION_UNTIL_10,
             MOQ_VERSION_DRAFT_11..=MOQ_VERSION_DRAFT_13 => SERVER_SETUP_CONTROL_MESSAGE_ID,
             _ => unimplemented!()
-        };
-        encode_control_message(ty, version, b, |b| {
-            b.put_varint(self.selected_version)?;
-            SetupParameters::to_bytes(&self.setup_parameters, b, version)?;
-            Ok(())
-        })?;
+        }
+    }
+
+    fn to_body_bytes(&self, b: &mut OctetsMut, version: Version) -> crate::error::Result<()> {
+        b.put_varint(self.selected_version)?;
+        SetupParameters::to_bytes(&self.setup_parameters, b, version)?;
         Ok(())
     }
-}
 
-impl FromBytes for ServerSetupMessage {
-    fn from_bytes(b: &mut Octets, version: Version) -> crate::error::Result<Self> {
-        let header = ControlMessageHeader::from_bytes(b, version)?;
-        match version {
-            MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_10 => {
-                assert_eq!(header.ty(), SERVER_SETUP_CONTROL_MESSAGE_ID_VERSION_UNTIL_10);
-            }
-            MOQ_VERSION_DRAFT_11..=MOQ_VERSION_DRAFT_13 => {
-                assert_eq!(header.ty(), SERVER_SETUP_CONTROL_MESSAGE_ID);
-            }
-            _ => unimplemented!()
-        }
-        assert!(b.cap() >= header.len());
+    fn from_body_bytes(b: &mut Octets, version: Version) -> crate::error::Result<Self> {
         let selected_version = b.get_varint().unwrap();
         let setup_parameters = SetupParameters::from_bytes(b, version)?;
         Ok(Self {
