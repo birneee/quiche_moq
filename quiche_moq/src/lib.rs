@@ -63,8 +63,8 @@ mod test {
         pipe.advance().unwrap();
 
         s_moq.poll(&mut pipe.server, &mut s_h3, &mut s_wt);
-        let request_id = s_moq.next_pending_received_subscription().unwrap();
-        let track_alias = s_moq.accept_subscription(&mut pipe.server, &mut s_wt, request_id);
+        let (request_id, _subscription) = s_moq.subscription_inbox_next().unwrap();
+        let track_alias = s_moq.accept_subscription(&mut pipe.server, &mut s_wt, *request_id);
         s_moq
             .send_obj(
                 b"hello",

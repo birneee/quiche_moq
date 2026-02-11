@@ -51,7 +51,6 @@ impl<'a> MoqHandle<'a> {
         self.session.read_obj_pld(buf, track_alias, self.wt, self.h3, self.quic)
     }
 
-    /// Get the next pending subscription request from the peer
     /// Get a pending subscription request from the peer if available.
     pub fn subscription_inbox_next(&self) -> Option<(&RequestId, &SubscribeMessage)> {
         self.session.subscription_inbox_next()

@@ -67,7 +67,7 @@ fn handshake() {
                     'conn: for icid in &mut r.endpoint.conn_index_iter() {
                         let Some(conn) = r.endpoint.conn_mut(icid) else { continue };
                         conn.app_data.moq_helper.on_post_handle_recvs(&mut conn.conn);
-                        let Some(moq) = conn.app_data.moq_helper.moq_handle(&mut conn.conn) else {
+                        let Some(mut moq) = conn.app_data.moq_helper.moq_handle(&mut conn.conn) else {
                             continue 'conn;
                         };
                         if !conn.app_data.subscribed {
@@ -134,17 +134,16 @@ fn handshake() {
                     'conn: for icid in &mut r.endpoint.conn_index_iter() {
                         let Some(conn) = r.endpoint.conn_mut(icid) else { continue };
                         conn.app_data.moq_helper.on_post_handle_recvs(&mut conn.conn);
-                        let Some(moq) = conn.app_data.moq_helper.moq_handle(&mut conn.conn) else {
+                        let Some(mut moq) = conn.app_data.moq_helper.moq_handle(&mut conn.conn) else {
                             continue 'conn;
                         };
 
-                        while let Some(request_id) = moq.next_pending_received_subscription() {
-                            let subscription = moq.pending_received_subscription(request_id);
+                        while let Some((request_id, subscription)) = moq.subscription_inbox_next() {
                             if subscription.namespace_trackname != "meeting--video".parse().unwrap() {
                                 unreachable!()
                             }
                             info!("accept track {}", subscription.namespace_trackname);
-                            let track_alias = moq.accept_subscription(request_id);
+                            let track_alias = moq.accept_subscription(*request_id);
                             let buf = b"hello";
                             moq.send_obj(buf, track_alias).unwrap();
                             info!("send obj: {}", str::from_utf8(buf).unwrap())
