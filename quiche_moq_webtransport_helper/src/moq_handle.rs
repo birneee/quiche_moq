@@ -52,13 +52,9 @@ impl<'a> MoqHandle<'a> {
     }
 
     /// Get the next pending subscription request from the peer
-    pub fn next_pending_received_subscription(&self) -> Option<RequestId> {
-        self.session.next_pending_received_subscription()
-    }
-
-    /// Get details of a pending subscription
-    pub fn pending_received_subscription(&mut self, request_id: RequestId) -> &SubscribeMessage {
-        self.session.pending_received_subscription(request_id)
+    /// Get a pending subscription request from the peer if available.
+    pub fn subscription_inbox_next(&self) -> Option<(&RequestId, &SubscribeMessage)> {
+        self.session.subscription_inbox_next()
     }
 
     /// Accept a subscription and create an outgoing track

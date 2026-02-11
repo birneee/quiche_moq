@@ -497,10 +497,10 @@ impl MoqTransportSession {
         stream.send_obj_pld(buf, wt, quic)
     }
 
-    /// Get a pending request from the peer if available.
-    /// use `accept_subscription` to create a track.
-    pub fn next_pending_received_subscription(&self) -> Option<RequestId> {
-        self.pending_received_subscriptions.keys().next().cloned()
+    /// Get a pending subscription request from the peer if available.
+    /// Use `accept_subscription` to accept it.
+    pub fn subscription_inbox_next(&self) -> Option<(&RequestId, &SubscribeMessage)> {
+        self.pending_received_subscriptions.iter().next()
     }
 
     /// Accept a subscription received from the peer
@@ -599,12 +599,6 @@ impl MoqTransportSession {
         let stream_id = track.current_stream().unwrap();
         let stream = self.in_streams.get_mut(&stream_id).unwrap();
         stream.read_obj_pld(quic, h3, wt, buf)
-    }
-
-    pub fn pending_received_subscription(&mut self, request_id: RequestId) -> &SubscribeMessage {
-        self.pending_received_subscriptions
-            .get(&request_id)
-            .unwrap()
     }
 
     /// Cancel sending on stream with Delivery Timeout

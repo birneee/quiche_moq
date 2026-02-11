@@ -1,5 +1,3 @@
-extern crate core;
-
 use crate::args::PublishArgs;
 use log::info;
 use quiche_mio_runner as runner;
@@ -16,6 +14,7 @@ use quiche_moq::wire::NamespaceTrackname;
 struct ConnAppData {
     moq_helper: MoqWebTransportHelper,
     namespace_trackname: NamespaceTrackname,
+    announced: bool,
 }
 
 type Endpoint = quiche_endpoint::Endpoint<ConnAppData, ()>;
@@ -60,6 +59,7 @@ pub(crate) fn run_publish(args: &PublishArgs) {
                 moq::Config::default(),
             ),
             namespace_trackname: args.namespace_trackname.parse().unwrap(),
+            announced: false,
         },
         None,
         None,
@@ -102,24 +102,48 @@ fn post_handle_recvs(r: &mut Runner) {
             assert!(conn.conn.peer_error().is_none());
             continue;
         };
-        post_handle_recvs_conn(moq, &conn.app_data.namespace_trackname);
+        post_handle_recvs_conn(moq, &conn.app_data.namespace_trackname, &mut conn.app_data.announced);
     }
 }
 
 fn post_handle_recvs_conn(
     mut moq: MoqHandle,
     namespace_trackname: &NamespaceTrackname,
+    announced: &mut bool,
 ) {
+    // Handle namespace publishing
     match moq.publish_namespace_status(namespace_trackname.namespace()) {
         PublishStatus::Unknown => {
             moq.publish_namespace(namespace_trackname.namespace().0.0.clone())
-                .unwrap()
+                .unwrap();
+            info!("publishing namespace {}", namespace_trackname.namespace());
         }
-        PublishStatus::Pending => {
-            info!("pending")
-        }
+        PublishStatus::Pending => {}
         PublishStatus::Accepted => {
-            info!("accepted")
+            if !*announced {
+                info!("announced namespace {} successfully", namespace_trackname.namespace());
+                *announced = true;
+            }
         }
+    }
+
+    // Handle incoming subscriptions
+    while let Some((request_id, subscription)) = moq.subscription_inbox_next() {
+        if &subscription.namespace_trackname != namespace_trackname {
+            info!("rejecting subscription to unknown track: {}", subscription.namespace_trackname);
+            // TODO: reject_subscription
+            continue;
+        }
+        info!("accepting subscription to {}", subscription.namespace_trackname);
+        let track_alias = moq.accept_subscription(*request_id);
+        
+        // Send a test object
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis();
+        let payload = format!("time: {}", timestamp);
+        moq.send_obj(payload.as_bytes(), track_alias).unwrap();
+        info!("sent object: {}", payload);
     }
 }

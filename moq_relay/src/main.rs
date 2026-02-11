@@ -93,13 +93,12 @@ fn post_handle_recvs_conn(
     h3_conn: &mut h3::Connection,
     quic_conn: &mut quiche::Connection,
 ) {
-    while let Some(request_id) = moq_session.next_pending_received_subscription() {
-        let subscription = moq_session.pending_received_subscription(request_id);
+    while let Some((request_id, subscription)) = moq_session.subscription_inbox_next() {
         if subscription.namespace_trackname != "meeting--video".parse().unwrap() {
             unreachable!()
         }
         info!("accept track {}", subscription.namespace_trackname);
-        let track_alias = moq_session.accept_subscription(quic_conn, wt_conn, request_id);
+        let track_alias = moq_session.accept_subscription(quic_conn, wt_conn, *request_id);
         let buf = b"hello";
         moq_session
             .send_obj(buf, track_alias, wt_conn, h3_conn, quic_conn)
