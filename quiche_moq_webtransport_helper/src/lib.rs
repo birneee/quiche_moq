@@ -40,6 +40,8 @@ impl MoqWebTransportHelper {
 
     /// Returns a handle to the MoQ session if ready, None otherwise.
     /// This bundles all connection references for ergonomic API calls.
+    /// Returns None until the MoQ session is fully initialized, so no additional
+    /// `initialized()` check is needed.
     pub fn moq_handle<'a>(&'a mut self, quic: &'a mut quiche::Connection) -> Option<MoqHandle<'a>> {
         match &mut self.state {
             State::Moq { moq_session, h3_conn, wt_conn } => Some(MoqHandle {

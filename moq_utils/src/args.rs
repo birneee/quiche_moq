@@ -23,7 +23,7 @@ pub(crate) struct PublishArgs {
     pub(crate) url: String,
     #[arg(env = "SSLKEYLOGFILE", long)]
     pub(crate) ssl_key_log_file: Option<PathBuf>,
-    #[arg(short = 't')]
+    #[arg(long, short = 't')]
     /// Namespace and track name
     /// e.g. example.2enet-team2-project_x--report
     pub(crate) namespace_trackname: String,
@@ -36,7 +36,7 @@ pub(crate) struct SubscribeArgs {
     pub(crate) url: String,
     #[arg(env = "SSLKEYLOGFILE")]
     pub(crate) ssl_key_log_file: Option<PathBuf>,
-    #[arg(long)]
+    #[arg(long, short = 't')]
     /// Namespace and track name
     /// e.g. example.2enet-team2-project_x--report
     pub(crate) namespace_trackname: String,
