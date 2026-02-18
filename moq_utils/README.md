@@ -1,12 +1,12 @@
 # MoQ Utils
 
 ```shell
-while true; do date --rfc-3339=s; sleep 1; done | \
-moq-utils pub https://relay.cloudflare.mediaoverquic.com/
+while true; do date --rfc-3339=ns; sleep 1; done | \
+moq-utils pub -t time--seconds https://127.0.0.1:8080
 ```
 
 ```shell
-moq-utils sub --namespace "yawning-impala" --trackname "video" https://relay.cloudflare.mediaoverquic.com/
+moq-utils sub -t time--seconds -s $'\n' https://127.0.0.1:8080
 ```
 
 subscribe to time-server

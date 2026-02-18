@@ -1,3 +1,4 @@
+use std::fmt::{Display, Formatter};
 use octets::{Octets, OctetsMut};
 
 /// https://www.ietf.org/archive/id/draft-ietf-moq-transport-13.html#name-reason-phrase-structure
@@ -15,5 +16,11 @@ impl ReasonPhrase {
         b.put_varint(self.0.len() as u64)?;
         b.put_bytes(self.0.as_bytes())?;
         Ok(())
+    }
+}
+
+impl Display for ReasonPhrase {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
     }
 }

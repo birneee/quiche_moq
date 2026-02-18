@@ -14,3 +14,5 @@ url = { workspace = true }
 bytes = { workspace = true }
 quiche_moq_webtransport_helper = { workspace = true }
 quiche_h3_utils = { workspace = true }
+mio = { workspace = true, features = ["os-ext"] }
+libc = "0.2"

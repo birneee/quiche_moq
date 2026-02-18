@@ -288,7 +288,6 @@ impl MoqTransportSession {
                         self.pending_subscribe_responses.insert(req_id, Ok((track_alias, cm)));
                     }
                     ControlMessageEnum::RequestError(cm) => {
-                        error!("{:?}", cm);
                         let req_id = cm.request_id();
                         let _req = self.pending_subscribe.remove(&req_id).unwrap();
                         self.pending_subscribe_responses.insert(req_id, Err(cm));
@@ -307,6 +306,7 @@ impl MoqTransportSession {
                         assert!(cm.supported_versions.contains(&self.config.setup_version));
                         let version = self.config.setup_version;
                         self.selected_version = Some(version);
+                        self.max_request_id = cm.setup_parameters.max_request_id.unwrap_or(DEFAULT_MAX_REQUEST_ID_SETUP_PARAMETER);
                         self.send_control_message(
                             quic,
                             wt,
@@ -533,6 +533,24 @@ impl MoqTransportSession {
         track_alias
     }
 
+    pub fn reject_subscription(
+        &mut self,
+        quic: &mut quiche::Connection,
+        wt: &mut wt::Connection,
+        request_id: RequestId,
+        error_code: u64,
+    ) {
+        let cm = self
+            .pending_received_subscriptions
+            .remove(&request_id)
+            .unwrap();
+        self.send_control_message(
+            quic,
+            wt,
+            &ControlMessageEnum::RequestError(RequestErrorMessage::from(&cm, error_code)),
+        );
+    }
+
     /// Get next unanswered namespace publish
     pub fn next_pending_namespace_publish(&mut self) -> Option<(&RequestId, &PublishNamespaceMessage)> {
         self.pending_received_publish_namespace.iter().next()
@@ -570,7 +588,9 @@ impl MoqTransportSession {
         h3: &mut h3::Connection,
         quic: &mut quiche::Connection,
     ) -> Result<ObjectHeader> {
-        let track = self.in_tracks.get_mut(&track_alias).unwrap();
+        let Some(track) = self.in_tracks.get_mut(&track_alias) else {
+            return Err(Error::Done);
+        };
         loop {
             let stream_id = track.current_stream().ok_or(Error::Done)?;
             let stream = self.in_streams.get_mut(&stream_id).unwrap();

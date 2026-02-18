@@ -3,7 +3,7 @@ use std::fmt::{Display, Formatter};
 use std::str::FromStr;
 use crate::{Namespace, Tuple};
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Hash)]
 pub struct NamespaceTrackname {
     pub(crate) namespace: Namespace,
     pub(crate) trackname: Vec<u8>,

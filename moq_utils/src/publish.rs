@@ -1,20 +1,25 @@
 use crate::args::PublishArgs;
-use log::info;
+use log::{error, info};
 use quiche_mio_runner as runner;
 use quiche_mio_runner::quiche_endpoint::quiche::PROTOCOL_VERSION;
 use quiche_mio_runner::quiche_endpoint::{EndpointConfig, quiche};
 use quiche_mio_runner::{Socket, quiche_endpoint};
 use quiche_moq as moq;
-use quiche_moq_webtransport_helper::{MoqWebTransportHelper, MoqHandle};
-use std::fs;
-use url::Url;
+use quiche_moq::wire::{NamespaceTrackname, TrackAlias, REQUEST_ERROR_DOES_NOT_EXIST};
+use quiche_moq_webtransport_helper::{MoqHandle, MoqWebTransportHelper};
 use quiche_moq::PublishStatus;
-use quiche_moq::wire::NamespaceTrackname;
+use std::fs;
+use std::io;
+use std::os::unix::io::AsRawFd;
+use url::Url;
 
 struct ConnAppData {
     moq_helper: MoqWebTransportHelper,
     namespace_trackname: NamespaceTrackname,
     announced: bool,
+    track_aliases: Vec<TrackAlias>,
+    input_fd: i32,
+    line_buf: Vec<u8>,
 }
 
 type Endpoint = quiche_endpoint::Endpoint<ConnAppData, ()>;
@@ -39,6 +44,23 @@ pub(crate) fn run_publish(args: &PublishArgs) {
 
     info!("connect to {}", peer_addr);
 
+    // Determine input fd: default to stdin
+    let input_fd = match &args.input {
+        None => io::stdin().as_raw_fd(),
+        Some(p) if p.to_str().unwrap() == "-" => io::stdin().as_raw_fd(),
+        Some(p) => {
+            use std::os::unix::io::AsRawFd;
+            let f = std::fs::File::open(p).unwrap();
+            f.as_raw_fd()
+        }
+    };
+
+    // Set input fd to non-blocking
+    unsafe {
+        let flags = libc::fcntl(input_fd, libc::F_GETFL);
+        libc::fcntl(input_fd, libc::F_SETFL, flags | libc::O_NONBLOCK);
+    }
+
     let icid = endpoint.connect(
         None,
         socket.local_addr,
@@ -47,7 +69,6 @@ pub(crate) fn run_publish(args: &PublishArgs) {
             let mut c = quiche::Config::new(PROTOCOL_VERSION).unwrap();
             MoqWebTransportHelper::configure_quic(&mut c);
             c.verify_peer(false);
-            c.set_max_idle_timeout(1000);
             if keylog.is_some() {
                 c.log_keys()
             }
@@ -60,6 +81,9 @@ pub(crate) fn run_publish(args: &PublishArgs) {
             ),
             namespace_trackname: args.namespace_trackname.parse().unwrap(),
             announced: false,
+            track_aliases: Vec::new(),
+            input_fd,
+            line_buf: Vec::new(),
         },
         None,
         None,
@@ -83,6 +107,13 @@ pub(crate) fn run_publish(args: &PublishArgs) {
         None,
     );
 
+    // Register stdin with mio so poll wakes up when stdin has data
+    runner.registry().register_external(
+        &mut mio::unix::SourceFd(&input_fd),
+        mio::Interest::READABLE,
+        (),
+    );
+
     runner.register_socket(socket);
 
     runner.run();
@@ -95,14 +126,20 @@ fn post_handle_recvs(r: &mut Runner) {
         };
         conn.app_data.moq_helper.on_post_handle_recvs(&mut conn.conn);
         let Some(moq) = conn.app_data.moq_helper.moq_handle(&mut conn.conn) else {
-            // Not ready yet - verify QUIC connection is healthy
             assert!(!conn.conn.is_timed_out());
             assert!(!conn.conn.is_closed());
             assert!(conn.conn.local_error().is_none());
             assert!(conn.conn.peer_error().is_none());
             continue;
         };
-        post_handle_recvs_conn(moq, &conn.app_data.namespace_trackname, &mut conn.app_data.announced);
+        post_handle_recvs_conn(
+            moq,
+            &conn.app_data.namespace_trackname,
+            &mut conn.app_data.announced,
+            &mut conn.app_data.track_aliases,
+            conn.app_data.input_fd,
+            &mut conn.app_data.line_buf,
+        );
     }
 }
 
@@ -110,6 +147,9 @@ fn post_handle_recvs_conn(
     mut moq: MoqHandle,
     namespace_trackname: &NamespaceTrackname,
     announced: &mut bool,
+    track_aliases: &mut Vec<TrackAlias>,
+    input_fd: i32,
+    line_buf: &mut Vec<u8>,
 ) {
     // Handle namespace publishing
     match moq.publish_namespace_status(namespace_trackname.namespace()) {
@@ -128,22 +168,53 @@ fn post_handle_recvs_conn(
     }
 
     // Handle incoming subscriptions
-    while let Some((request_id, subscription)) = moq.subscription_inbox_next() {
-        if &subscription.namespace_trackname != namespace_trackname {
+    loop {
+        let Some((request_id, subscription)) = moq.subscription_inbox_next() else {
+            break;
+        };
+        let request_id = *request_id;
+        if subscription.namespace_trackname != *namespace_trackname {
             info!("rejecting subscription to unknown track: {}", subscription.namespace_trackname);
-            // TODO: reject_subscription
+            moq.reject_subscription(request_id, REQUEST_ERROR_DOES_NOT_EXIST);
             continue;
         }
-        info!("accepting subscription to {}", subscription.namespace_trackname);
-        let track_alias = moq.accept_subscription(*request_id);
-        
-        // Send a test object
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis();
-        let payload = format!("time: {}", timestamp);
-        moq.send_obj(payload.as_bytes(), track_alias).unwrap();
-        info!("sent object: {}", payload);
+        info!("accepting subscription to {}", namespace_trackname);
+        let track_alias = moq.accept_subscription(request_id);
+        track_aliases.push(track_alias);
+    }
+
+    if track_aliases.is_empty() {
+        return;
+    }
+
+    // Read available input data (non-blocking, drain until EAGAIN)
+    let mut tmp = [0u8; 4096];
+    loop {
+        let n = unsafe {
+            libc::read(input_fd, tmp.as_mut_ptr() as *mut libc::c_void, tmp.len())
+        };
+        if n > 0 {
+            line_buf.extend_from_slice(&tmp[..n as usize]);
+        } else {
+            break;
+        }
+    }
+
+    // Extract complete lines and send each as an object
+    while let Some(pos) = line_buf.iter().position(|&b| b == b'\n') {
+        let line: Vec<u8> = line_buf.drain(..=pos).collect();
+        let payload = &line[..line.len() - 1]; // strip newline
+        if payload.is_empty() {
+            continue;
+        }
+        for &track_alias in track_aliases.iter() {
+            if let Err(e) = moq.send_obj_hdr(payload.len(), track_alias) {
+                error!("send obj hdr error: {:?}", e);
+                continue;
+            }
+            if let Err(e) = moq.send_obj_pld(payload, track_alias) {
+                error!("send obj pld error: {:?}", e);
+            }
+        }
     }
 }

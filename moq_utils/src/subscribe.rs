@@ -53,9 +53,9 @@ pub(crate) fn run_subscribe(args: &SubscribeArgs) {
     });
 
     let output = match &args.output {
+        None => Some(File::create("/dev/stdout").unwrap()),
         Some(o) if o.to_str().unwrap() == "-" => Some(File::create("/dev/stdout").unwrap()),
         Some(o) => Some(File::create(o).unwrap()),
-        None => None,
     };
 
     info!("connect to {}", peer_addr);
@@ -139,6 +139,7 @@ fn post_handle_recvs_conn(mut moq: MoqHandle, args: &SubscribeArgs, state: &mut 
         None => match moq.subscribe(&state.namespace_trackname) {
             Ok(request_id) => {
                 state.moq_request_id = Some(request_id);
+                info!("subscribe to: {}", state.namespace_trackname);
                 request_id
             }
             Err(moq::Error::RequestBlocked) => {
@@ -157,7 +158,15 @@ fn post_handle_recvs_conn(mut moq: MoqHandle, args: &SubscribeArgs, state: &mut 
                     state.track_alias = Some(track_alias);
                     track_alias
                 }
-                Some(Err(e)) => unimplemented!("{:?}", e),
+                Some(Err(e)) => {
+                    error!(
+                        "subscribe {} rejected with {} - {}",
+                        state.namespace_trackname,
+                        e.error_code(),
+                        e.error_reason(),
+                    );
+                    return;
+                },
                 None => return, // no answer yet
             }
         }

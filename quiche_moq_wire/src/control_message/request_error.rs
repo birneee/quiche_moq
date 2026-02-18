@@ -1,6 +1,6 @@
 use octets::{Octets, OctetsMut};
 use crate::{ReasonPhrase, RequestId, TrackAlias, Version, MOQ_VERSION_DRAFT_07, MOQ_VERSION_DRAFT_11, MOQ_VERSION_DRAFT_12, MOQ_VERSION_DRAFT_13, REQUEST_ERROR_MESSAGE_ID};
-use crate::control_message::ControlMessage;
+use crate::control_message::{ControlMessage, SubscribeMessage};
 
 #[allow(unused)]
 #[derive(Debug)]
@@ -20,6 +20,17 @@ impl RequestErrorMessage {
         self.request_id
     }
     pub fn error_code(&self) -> u64 { self. error_code }
+    pub fn error_reason(&self) -> &ReasonPhrase {
+        &self.error_reason
+    }
+    pub fn from(sm: &SubscribeMessage, error_code: u64) -> Self {
+        Self {
+            request_id: sm.request_id,
+            error_code,
+            error_reason: ReasonPhrase("".to_string()),
+            track_alias: sm.track_alias,
+        }
+    }
 }
 
 impl ControlMessage for RequestErrorMessage {

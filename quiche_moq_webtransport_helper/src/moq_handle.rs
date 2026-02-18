@@ -61,6 +61,11 @@ impl<'a> MoqHandle<'a> {
         self.session.accept_subscription(self.quic, self.wt, request_id)
     }
 
+    /// Reject a subscription from the peer
+    pub fn reject_subscription(&mut self, request_id: RequestId, error_code: u64) {
+        self.session.reject_subscription(self.quic, self.wt, request_id, error_code)
+    }
+
     /// Get the next pending namespace publish request
     pub fn next_pending_namespace_publish(&mut self) -> Option<(&RequestId, &PublishNamespaceMessage)> {
         self.session.next_pending_namespace_publish()

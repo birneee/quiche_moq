@@ -27,6 +27,9 @@ pub(crate) struct PublishArgs {
     /// Namespace and track name
     /// e.g. example.2enet-team2-project_x--report
     pub(crate) namespace_trackname: String,
+    /// The input file path. "-" or unset means stdin (default).
+    #[arg(long, short = 'i')]
+    pub(crate) input: Option<PathBuf>,
 }
 
 #[derive(Parser, Clone)]
@@ -40,15 +43,14 @@ pub(crate) struct SubscribeArgs {
     /// Namespace and track name
     /// e.g. example.2enet-team2-project_x--report
     pub(crate) namespace_trackname: String,
-    /// The output file path.
-    /// "-" can be used for stdout.
+    /// The output file path. "-" or unset means stdout (default).
     #[arg(long, short = 'o')]
     pub(crate) output: Option<PathBuf>,
     #[arg(long, value_enum, default_value_t=SetupVersion::Draft13)]
     pub(crate) setup_version: SetupVersion,
     /// Add separator between objects in output
     /// e.g. "\n"
-    #[arg(long, default_value="")]
+    #[arg(long,short='s',default_value="")]
     pub(crate) separator: String,
 }
 
