@@ -134,12 +134,17 @@ fn post_handle_recvs(runner: &mut Runner) {
 
 /// handle a single connection after receive
 fn post_handle_recvs_conn(mut moq: MoqHandle, args: &SubscribeArgs, state: &mut SubscribeState) {
+    while let Some((&request_id, cm)) = moq.next_pending_namespace_publish() {
+        let namespace = cm.track_namespace().clone();
+        info!("namespace announced: {}", namespace);
+        moq.accept_namespace_publish(request_id);
+    }
     let request_id = match state.moq_request_id {
         Some(v) => v,
         None => match moq.subscribe(&state.namespace_trackname) {
             Ok(request_id) => {
                 state.moq_request_id = Some(request_id);
-                info!("subscribe to: {}", state.namespace_trackname);
+                info!("request subscribe: {}", state.namespace_trackname);
                 request_id
             }
             Err(moq::Error::RequestBlocked) => {
@@ -154,7 +159,7 @@ fn post_handle_recvs_conn(mut moq: MoqHandle, args: &SubscribeArgs, state: &mut 
         None => {
             match moq.poll_subscribe_response(request_id) {
                 Some(Ok((track_alias, _cm))) => {
-                    info!("subscribed to: {}", state.namespace_trackname);
+                    info!("subscribe accepted: {}", state.namespace_trackname);
                     state.track_alias = Some(track_alias);
                     track_alias
                 }

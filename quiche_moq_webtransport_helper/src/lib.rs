@@ -121,7 +121,7 @@ impl MoqWebTransportHelper {
                             let State::H3 { h3_conn, wt_conn } = std::mem::take(&mut self.state) else {
                                 unreachable!()
                             };
-                            self.state = State::Moq {
+                            self.state = State::MoqHandshake {
                                 h3_conn,
                                 wt_conn,
                                 moq_session,

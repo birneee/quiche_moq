@@ -90,7 +90,7 @@ impl MoqTransportSession {
             next_request_id: INITIAL_CLIENT_REQUEST_ID,
             next_expected_request_id: INITIAL_SERVER_REQUEST_ID,
             max_request_id: 0,
-            out_max_request_id: 0,
+            out_max_request_id: 100, //TODO make configurable
             in_streams: HashMap::new(),
             in_tracks: HashMap::new(),
             out_tracks: HashMap::new(),
@@ -314,7 +314,7 @@ impl MoqTransportSession {
                                 version,
                                 SetupParameters {
                                     path: None,
-                                    max_request_id: Some(100),
+                                    max_request_id: Some(self.out_max_request_id),
                                     role: Some(Role::PubSub),
                                     extra_parameters: vec![],
                                 },
@@ -499,8 +499,16 @@ impl MoqTransportSession {
 
     /// Get a pending subscription request from the peer if available.
     /// Use `accept_subscription` to accept it.
+    /// Or `reject_subscription`.
     pub fn subscription_inbox_next(&self) -> Option<(&RequestId, &SubscribeMessage)> {
         self.pending_received_subscriptions.iter().next()
+    }
+
+    /// Pending subscription requests.
+    /// Use `accept_subscription` to accept it.
+    /// Or `reject_subscription`.
+    pub fn pending_received_subscriptions(&self) -> &HashMap<RequestId, SubscribeMessage> {
+        &self.pending_received_subscriptions
     }
 
     /// Accept a subscription received from the peer

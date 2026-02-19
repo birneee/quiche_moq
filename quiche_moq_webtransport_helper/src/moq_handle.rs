@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use quiche::h3;
 use quiche_moq as moq;
 use quiche_moq::MoqTransportSession;
@@ -54,6 +55,13 @@ impl<'a> MoqHandle<'a> {
     /// Get a pending subscription request from the peer if available.
     pub fn subscription_inbox_next(&self) -> Option<(&RequestId, &SubscribeMessage)> {
         self.session.subscription_inbox_next()
+    }
+
+    /// Pending subscription requests.
+    /// Use `accept_subscription` to accept it.
+    /// Or `reject_subscription`.
+    pub fn pending_received_subscriptions(&self) -> &HashMap<RequestId, SubscribeMessage> {
+        self.session.pending_received_subscriptions()
     }
 
     /// Accept a subscription and create an outgoing track
