@@ -9,6 +9,8 @@ use crate::pending_subscribe::PendingSubscribe;
 use log::{debug, error, trace};
 use octets::{Octets, OctetsMut};
 use quiche::{h3, Shutdown};
+use partial_borrow::prelude::*;
+use partial_borrow::SplitOff;
 use quiche_moq_wire::ErrorCode;
 use quiche_webtransport as wt;
 use short_buf::ShortBuf;
@@ -24,6 +26,7 @@ use crate::session::PublishStatus::{Accepted, Pending, Unknown};
 const INITIAL_CLIENT_REQUEST_ID: RequestId = 0;
 const INITIAL_SERVER_REQUEST_ID: RequestId = 1;
 
+#[derive(PartialBorrow)]
 pub struct MoqTransportSession {
     server: bool,
     /// Always `Some` for client
@@ -195,25 +198,23 @@ impl MoqTransportSession {
         wt: &mut wt::Connection,
         cm: &ControlMessageEnum,
     ) {
-        Self::_send_control_message(self.control_stream_id, self.selected_version, &self.config, conn, wt, cm);
+        Self::_send_control_message(self.as_ref(), conn, wt, cm);
     }
 
     fn _send_control_message(
-        control_stream_id: Option<StreamID>,
-        selected_version: Option<u64>,
-        config: &Config,
+        s:  &partial!(MoqTransportSession const control_stream_id selected_version config, ! *),
         quic: &mut quiche::Connection,
         wt: &mut wt::Connection,
         cm: &ControlMessageEnum,
     ) {
-        let Some(control_stream_id) = control_stream_id else {
+        let Some(control_stream_id) = *s.control_stream_id else {
             panic!("control stream not opened yet")
         };
         let mut b = [0u8; 100];
         let mut o = OctetsMut::with_slice(&mut b);
         cm.to_bytes(
             &mut o,
-            selected_version.unwrap_or(config.setup_version),
+            s.selected_version.unwrap_or(s.config.setup_version),
         )
         .unwrap();
         let len = o.off();
@@ -527,17 +528,14 @@ impl MoqTransportSession {
     /// Return `SubscriptionRequestAction::Accept` to accept, `Reject(error_code)` to reject,
     /// or `Keep` to defer the decision to a later call.
     pub fn process_subscriptions_requests<F>(&mut self, mut f: F, quic: &mut quiche::Connection, wt: &mut quiche_webtransport::Connection) where F: FnMut(&RequestId, &SubscribeMessage) -> SubscriptionRequestAction {
-        self.pending_received_subscriptions.retain(|id, sub| {
+    let (s_iter, s_msg) = SplitOff::<partial!(MoqTransportSession mut pending_received_subscriptions, ! *)>::split_off_mut(self);
+    s_iter.pending_received_subscriptions.retain(|id, sub| {
             match f(id, sub) {
                 SubscriptionRequestAction::Keep => true,
                 SubscriptionRequestAction::Accept => {
                     Self::_accept_subscription(
-                        self.control_stream_id,
-                        &self.config,
+                        s_msg.as_mut(),
                         sub,
-                        self.selected_version,
-                        &mut self.next_out_track_alias,
-                        &mut self.out_tracks,
                         quic,
                         wt,
                     );
@@ -545,11 +543,9 @@ impl MoqTransportSession {
                 },
                 SubscriptionRequestAction::Reject(error_code) => {
                     Self::_reject_subscription(
+                        s_msg.as_ref(),
                         sub, 
                         error_code, 
-                        self.control_stream_id, 
-                        self.selected_version,
-                        &self.config, 
                         quic, 
                         wt
                     );
@@ -560,36 +556,30 @@ impl MoqTransportSession {
     }
 
     /// Must be removed from `Self::pending_received_subscriptions` manually
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::type_complexity)]
     pub fn _accept_subscription(
-        control_stream_id: Option<StreamID>,
-        config: &Config,
+        s: &mut partial!(MoqTransportSession const control_stream_id config selected_version, mut next_out_track_alias out_tracks, ! *),
         subscribe_message: &SubscribeMessage,
-        selected_version: Option<u64>,
-        next_out_track_alias: &mut u64,
-        out_tracks: &mut HashMap<TrackAlias, OutTrack>,
         quic: &mut quiche::Connection,
         wt: &mut wt::Connection,
     ) -> TrackAlias {
-        let (out_cm, track_alias) = match selected_version {
+        let (out_cm, track_alias) = match *s.selected_version {
             Some(MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_11) => (ControlMessageEnum::SubscribeOk(SubscribeOkMessage::from(subscribe_message, None)), subscribe_message.track_alias.unwrap()),
             Some(MOQ_VERSION_DRAFT_12..=MOQ_VERSION_DRAFT_13) => {
-                let track_alias = *next_out_track_alias;
-                *next_out_track_alias += 1;
+                let track_alias = *s.next_out_track_alias;
+                *s.next_out_track_alias += 1;
                 (ControlMessageEnum::SubscribeOk(SubscribeOkMessage::from(subscribe_message, Some(track_alias))), track_alias)
             },
             Some(_) => unimplemented!(),
             None => unreachable!(),
         };
         Self::_send_control_message(
-            control_stream_id,
-            selected_version,
-            config,
+            s.as_ref(),
             quic,
             wt,
             &out_cm,
         );
-        out_tracks.insert(track_alias, OutTrack::new());
+        s.out_tracks.insert(track_alias, OutTrack::new());
         track_alias
     }
 
@@ -605,12 +595,8 @@ impl MoqTransportSession {
             .remove(&request_id)
             .unwrap();
         Self::_accept_subscription(
-            self.control_stream_id,
-            &self.config,
+            self.as_mut(),
             &cm, 
-            self.selected_version, 
-            &mut self.next_out_track_alias, 
-            &mut self.out_tracks, 
             quic, 
             wt,
         )
@@ -618,18 +604,14 @@ impl MoqTransportSession {
 
     /// Must be removed from `Self::pending_received_subscriptions` manually
     pub fn _reject_subscription(
+        s: &partial!(MoqTransportSession const control_stream_id selected_version config, ! *),
         subscribe_message: &SubscribeMessage,
         error_code: u64,
-        control_stream_id: Option<StreamID>,
-        selected_version: Option<u64>,
-        config: &Config,
         quic: &mut quiche::Connection,
         wt: &mut wt::Connection
     ) {
         Self::_send_control_message(
-            control_stream_id, 
-            selected_version, 
-            config, 
+            s,
             quic, 
             wt, 
             &ControlMessageEnum::RequestError(RequestErrorMessage::from(subscribe_message, error_code))
@@ -648,11 +630,9 @@ impl MoqTransportSession {
             .remove(&request_id)
             .unwrap();
         Self::_reject_subscription(
+            self.as_mut(),
             &cm,
             error_code,
-            self.control_stream_id, 
-            self.selected_version, 
-            &self.config, 
             quic, 
             wt
         );

@@ -12,6 +12,7 @@ short_buf = { workspace = true }
 log = { workspace = true }
 smallvec = { workspace = true }
 quiche_utils = { workspace = true }
+partial-borrow = "1.0.1"
 
 [dev-dependencies]
 quiche = { workspace = true, features = ["internal"]}
