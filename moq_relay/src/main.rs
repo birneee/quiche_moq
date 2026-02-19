@@ -179,11 +179,10 @@ fn post_handle_recvs(r: &mut Runner) {
         if !sub.is_publisher_accepted() { continue; }
         for s in &mut sub.subscribers {
             let Some(pending_rid) = s.pending_request_id.take() else { continue };
-            if let Some(sub_conn) = conns.get_mut(s.client_id) {
-                if let Some(mut moq) = sub_conn.app_data.moq_helper.moq_handle(&mut sub_conn.conn) {
+            if let Some(sub_conn) = conns.get_mut(s.client_id)
+                && let Some(mut moq) = sub_conn.app_data.moq_helper.moq_handle(&mut sub_conn.conn) {
                     s.track_alias = Some(moq.accept_subscription(pending_rid));
                 }
-            }
         }
     }
 
@@ -226,26 +225,22 @@ fn post_handle_recvs(r: &mut Runner) {
                 FwdStep::Hdr(len) => {
                     for s in &sub.subscribers {
                         let Some(sub_ta) = s.track_alias else { continue };
-                        if let Some(sub_conn) = conns.get_mut(s.client_id) {
-                            if let Some(mut moq) = sub_conn.app_data.moq_helper.moq_handle(&mut sub_conn.conn) {
-                                if let Err(e) = moq.send_obj_hdr(len, sub_ta) {
+                        if let Some(sub_conn) = conns.get_mut(s.client_id)
+                            && let Some(mut moq) = sub_conn.app_data.moq_helper.moq_handle(&mut sub_conn.conn)
+                                && let Err(e) = moq.send_obj_hdr(len, sub_ta) {
                                     error!("send obj hdr to subscriber {} for {}: {:?}", s.client_id, nt, e);
                                 }
-                            }
-                        }
                     }
                 }
                 FwdStep::Pld(n) => {
                     sub.obj_forwarded += n;
                     for s in &sub.subscribers {
                         let Some(sub_ta) = s.track_alias else { continue };
-                        if let Some(sub_conn) = conns.get_mut(s.client_id) {
-                            if let Some(mut moq) = sub_conn.app_data.moq_helper.moq_handle(&mut sub_conn.conn) {
-                                if let Err(e) = moq.send_obj_pld(&sub.obj_buf[..n], sub_ta) {
+                        if let Some(sub_conn) = conns.get_mut(s.client_id)
+                            && let Some(mut moq) = sub_conn.app_data.moq_helper.moq_handle(&mut sub_conn.conn)
+                                && let Err(e) = moq.send_obj_pld(&sub.obj_buf[..n], sub_ta) {
                                     error!("send obj pld to subscriber {} for {}: {:?}", s.client_id, nt, e);
                                 }
-                            }
-                        }
                     }
                     if sub.obj_forwarded >= sub.obj_payload_len {
                         sub.obj_payload_len = 0;
@@ -308,8 +303,7 @@ fn post_handle_recvs_conn(
             sub.subscribers.push(SubscriberInfo { client_id: cid, pending_request_id: None, track_alias: Some(track_alias) });
         }
     }
-    loop {
-        let Some((&request_id, cm)) = moq.next_pending_namespace_publish() else { break };
+    while let Some((&request_id, cm)) = moq.next_pending_namespace_publish() {
         let namespace = cm.track_namespace().clone();
         info!("accept publish namespace: {}", namespace);
         app_data.namespaces.insert(namespace, cid);
