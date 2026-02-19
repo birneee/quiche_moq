@@ -18,6 +18,7 @@ pub use error::Error;
 pub use error::Result;
 pub use session::MoqTransportSession;
 pub use session::PublishStatus;
+pub use session::SubscriptionRequestAction;
 
 
 #[cfg(test)]

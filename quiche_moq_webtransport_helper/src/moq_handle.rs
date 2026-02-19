@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use quiche::h3;
 use quiche_moq as moq;
-use quiche_moq::MoqTransportSession;
+use quiche_moq::{MoqTransportSession, SubscriptionRequestAction};
 use quiche_moq::wire::{NamespaceTrackname, Namespace, RequestId, TrackAlias};
 use quiche_moq::wire::control_message::{PublishNamespaceMessage, RequestErrorMessage, SubscribeMessage, SubscribeOkMessage};
 use quiche_moq::wire::object::ObjectHeader;
@@ -62,6 +62,15 @@ impl<'a> MoqHandle<'a> {
     /// Or `reject_subscription`.
     pub fn pending_received_subscriptions(&self) -> &HashMap<RequestId, SubscribeMessage> {
         self.session.pending_received_subscriptions()
+    }
+
+    /// Process all pending subscription requests via a closure.
+    /// Return `SubscriptionRequestAction::Accept` to accept, `Reject(code)` to reject,
+    /// or `Keep` to defer the decision to a later call.
+    pub fn process_received_subscriptions<F>(&mut self, f: F)
+    where F: FnMut(&RequestId, &SubscribeMessage) -> SubscriptionRequestAction
+    {
+        self.session.process_subscriptions_requests(f, self.quic, self.wt)
     }
 
     /// Accept a subscription and create an outgoing track

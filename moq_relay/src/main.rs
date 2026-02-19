@@ -5,6 +5,7 @@ use quiche_mio_runner as runner;
 use quiche_mio_runner::Socket;
 use quiche_mio_runner::quiche_endpoint::{Endpoint, EndpointConfig, ServerConfig, quiche, ClientId};
 use quiche_moq as moq;
+use quiche_moq::{SubscriptionRequestAction};
 use quiche_moq::wire::{Namespace, NamespaceTrackname, RequestId, TrackAlias, REQUEST_ERROR_DOES_NOT_EXIST};
 use quiche_moq_webtransport_helper::{MoqHandle, MoqWebTransportHelper};
 use quiche_utils::cert::load_or_generate_keys;
@@ -144,7 +145,7 @@ fn post_handle_recvs(r: &mut Runner) {
         match moq.subscribe(nt) {
             Ok(request_id) => {
                 sub.relay_request_id = Some(request_id);
-                info!("sent subscription {} to {}", nt, publisher);
+                info!("sent subscription request {} to {}", nt, publisher);
             }
             Err(e) => {
                 error!("failed to subscribe {} on publisher {}: {:?}", nt, publisher, e);
@@ -163,7 +164,7 @@ fn post_handle_recvs(r: &mut Runner) {
         match response {
             Ok((track_alias, _)) => {
                 sub.publisher_track_alias = Some(track_alias);
-                info!("publisher accepted {}", nt);
+                info!("accepted track {} by {}", nt, sub.publisher_id);
                 true
             }
             Err(e) => {
@@ -182,6 +183,7 @@ fn post_handle_recvs(r: &mut Runner) {
             if let Some(sub_conn) = conns.get_mut(s.client_id)
                 && let Some(mut moq) = sub_conn.app_data.moq_helper.moq_handle(&mut sub_conn.conn) {
                     s.track_alias = Some(moq.accept_subscription(pending_rid));
+                    info!("accept track for {}", s.client_id)
                 }
         }
     }
@@ -256,22 +258,19 @@ fn post_handle_recvs_conn(
     mut moq: MoqHandle<'_>,
     app_data: &mut AppData,
 ) {
-    // Iterate the inbox; defer moq mutations to after the shared borrow ends.
-    let mut to_reject: Vec<RequestId> = Vec::new();
-    let mut to_accept_now: Vec<(NamespaceTrackname, RequestId)> = Vec::new();
-    for (&request_id, cm) in moq.pending_received_subscriptions() {
+    moq.process_received_subscriptions(|request_id, cm| {
         let nt = &cm.namespace_trackname;
         // Skip subscriptions already queued from a previous frame.
         if app_data.subscriptions.get(nt)
-            .map(|sub| sub.subscribers.iter().any(|s| s.pending_request_id == Some(request_id)))
+            .map(|sub| sub.subscribers.iter().any(|s| s.pending_request_id == Some(*request_id)))
             .unwrap_or(false)
         {
-            continue;
+            return SubscriptionRequestAction::Keep;
         }
         if let Some(&publisher_id) = app_data.namespaces.get(nt.namespace()) {
             let nt = nt.clone();
             let sub = app_data.subscriptions.entry(nt.clone()).or_insert_with(|| {
-                info!("new subscription {} from {} (publisher: {})", nt, cid, publisher_id);
+                info!("new subscription request {} from {} (publisher: {})", nt, cid, publisher_id);
                 Subscription {
                     relay_request_id: None,
                     publisher_track_alias: None,
@@ -282,30 +281,19 @@ fn post_handle_recvs_conn(
                     obj_buf: Vec::new(),
                 }
             });
-            if sub.is_publisher_accepted() {
-                to_accept_now.push((nt, request_id));
-            } else {
+            if !sub.is_publisher_accepted() {
                 info!("queued subscriber {} for {} (awaiting publisher accept)", cid, nt);
-                sub.subscribers.push(SubscriberInfo { client_id: cid, pending_request_id: Some(request_id), track_alias: None });
             }
+            sub.subscribers.push(SubscriberInfo { client_id: cid, pending_request_id: Some(*request_id), track_alias: None });
+            SubscriptionRequestAction::Keep
         } else {
             info!("reject subscription {} from {} (no publisher)", nt, cid);
-            to_reject.push(request_id);
+            SubscriptionRequestAction::Reject(REQUEST_ERROR_DOES_NOT_EXIST)
         }
-    }
-    for request_id in to_reject {
-        moq.reject_subscription(request_id, REQUEST_ERROR_DOES_NOT_EXIST);
-    }
-    for (nt, request_id) in to_accept_now {
-        let track_alias = moq.accept_subscription(request_id);
-        if let Some(sub) = app_data.subscriptions.get_mut(&nt) {
-            info!("accepted subscriber {} for {}", cid, nt);
-            sub.subscribers.push(SubscriberInfo { client_id: cid, pending_request_id: None, track_alias: Some(track_alias) });
-        }
-    }
+    });
     while let Some((&request_id, cm)) = moq.next_pending_namespace_publish() {
         let namespace = cm.track_namespace().clone();
-        info!("accept publish namespace: {}", namespace);
+        info!("accept namespace {} from {}", namespace, cid);
         app_data.namespaces.insert(namespace, cid);
         moq.accept_namespace_publish(request_id);
     }
