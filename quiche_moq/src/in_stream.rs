@@ -2,12 +2,12 @@ use crate::error::{Error, Result};
 use log::debug;
 use octets::Octets;
 use quiche::h3;
-use short_buf::ShortBuf;
-use std::cmp::min;
 use quiche_moq_wire::object::ObjectHeader;
 use quiche_moq_wire::subgroup::SubgroupHeader;
 use quiche_moq_wire::{FromBytes, Version};
 use quiche_utils::stream_id::StreamID;
+use short_buf::ShortBuf;
+use std::cmp::min;
 
 const BUF_LEN: usize = 100;
 
@@ -17,6 +17,7 @@ pub struct InStream {
     version: Version,
     subgroup_header: Option<SubgroupHeader>,
     remaining_object_payload: usize,
+    current_object_id: Option<u64>,
     readable: bool,
     /// buffer used to temporary store subgroup and object header.
     /// And maybe also short object payloads.
@@ -33,6 +34,7 @@ impl InStream {
             version,
             subgroup_header: None,
             remaining_object_payload: 0,
+            current_object_id: None,
             readable: false,
             buf: ShortBuf::new(),
             wt_fin: false,
@@ -74,6 +76,23 @@ impl InStream {
             self.subgroup_header = Some(SubgroupHeader::from_bytes(&mut b, self.version)?);
             debug!("parsed subgroup header: {:?}", self.subgroup_header);
             self.buf.consume(b.off());
+            #[cfg(feature = "qlog")]
+            if let Some(qlog) = quic.qlog_streamer() {
+                let h = self.subgroup_header.as_ref().unwrap();
+                qlog.add_event_now(qlog::events::JsonEvent {
+                    time: 0.0,
+                    importance: qlog::events::EventImportance::Core,
+                    name: "moqt:subgroup_header_parsed".into(),
+                    data: serde_json::json!({
+                        "stream_id": self.stream_id.into_u64(),
+                        "track_alias": h.track_alias(),
+                        "group_id": h.group_id(),
+                        "subgroup_id": h.subgroup_id(),
+                        "publisher_priority": h.publisher_priority(),
+                    }),
+                })
+                .ok();
+            }
         }
 
         Ok(())
@@ -113,6 +132,26 @@ impl InStream {
 
         debug!("parsed object header: {:?}", object_header);
         self.remaining_object_payload = object_header.payload_len();
+        self.current_object_id = Some(object_header.id());
+        #[cfg(feature = "qlog")]
+        if let Some(qlog) = quic.qlog_streamer() {
+            let h = self.subgroup_header.as_ref().unwrap();
+            qlog.add_event_now(qlog::events::JsonEvent {
+                time: 0.0,
+                importance: qlog::events::EventImportance::Core,
+                name: "moqt:subgroup_object_parsed".into(),
+                data: serde_json::json!({
+                    "stream_id": self.stream_id.into_u64(),
+                    "group_id": h.group_id(),
+                    "subgroup_id": h.subgroup_id(),
+                    "object_id": object_header.id(),
+                    "extension_headers_length": object_header.extension_headers_len() as u64,
+                    "object_payload_length": object_header.payload_len() as u64,
+                    "object_status": object_header.status(),
+                }),
+            })
+            .ok();
+        }
         Ok(object_header)
     }
 
@@ -152,9 +191,27 @@ impl InStream {
         ) {
             Ok(v) => v,
             Err(quiche_webtransport::Error::Done) => return Err(Error::Done),
-            Err(e) => unimplemented!("{:?}", e)
+            Err(e) => unimplemented!("{:?}", e),
         };
         self.remaining_object_payload -= n;
+        #[cfg(feature = "qlog")]
+        if self.remaining_object_payload == 0
+            && let Some(qlog) = quic.qlog_streamer()
+        {
+            let h = self.subgroup_header.as_ref().unwrap();
+            qlog.add_event_now(qlog::events::JsonEvent {
+                time: 0.0,
+                importance: qlog::events::EventImportance::Core,
+                name: "moqt:subgroup_object_received".into(),
+                data: serde_json::json!({
+                    "stream_id": self.stream_id.into_u64(),
+                    "group_id": h.group_id(),
+                    "subgroup_id": h.subgroup_id(),
+                    "object_id": self.current_object_id.unwrap(),
+                }),
+            })
+            .ok();
+        }
         Ok(n)
     }
 }

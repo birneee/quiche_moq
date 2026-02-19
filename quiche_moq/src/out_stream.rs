@@ -53,6 +53,21 @@ impl OutStream {
                     wt.stream_send_if_capacity(self.stream_id.into(), quic, &b[..len], false)
                         .unwrap();
                     trace!("sent subgroup header on stream {}", self.stream_id);
+                    #[cfg(feature = "qlog")]
+                    if let Some(qlog) = quic.qlog_streamer() {
+                        qlog.add_event_now(qlog::events::JsonEvent {
+                            time: 0.0,
+                            importance: qlog::events::EventImportance::Core,
+                            name: "moqt:subgroup_header_created".into(),
+                            data: serde_json::json!({
+                                "stream_id": self.stream_id.into_u64(),
+                                "track_alias": subgroup.track_alias(),
+                                "group_id": subgroup.group_id(),
+                                "subgroup_id": subgroup.subgroup_id(),
+                                "publisher_priority": subgroup.publisher_priority(),
+                            }),
+                        }).ok();
+                    }
                     self.state = State::ObjectHeader {
                         subgroup_ty: subgroup.ty()
                     };
@@ -67,6 +82,21 @@ impl OutStream {
                     wt.stream_send_if_capacity(self.stream_id.into(), quic, &b[..len], false)
                         .unwrap();
                     trace!("sent {:?} on stream {}", object_header, self.stream_id);
+                    #[cfg(feature = "qlog")]
+                    if let Some(qlog) = quic.qlog_streamer() {
+                        qlog.add_event_now(qlog::events::JsonEvent {
+                            time: 0.0,
+                            importance: qlog::events::EventImportance::Core,
+                            name: "moqt:subgroup_object_created".into(),
+                            data: serde_json::json!({
+                                "stream_id": self.stream_id.into_u64(),
+                                "object_id": object_header.id(),
+                                "extension_headers_length": object_header.extension_headers_len() as u64,
+                                "object_payload_length": object_header.payload_len() as u64,
+                                "object_status": object_header.status(),
+                            }),
+                        }).ok();
+                    }
                     self.state = State::ObjectPayload {
                         subgroup_ty,
                         remaining_bytes: size,

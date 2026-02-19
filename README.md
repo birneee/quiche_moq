@@ -50,6 +50,14 @@ $ RUST_LOG=info cargo run -p time-client
 - [ ] track status
 - [x] streams
 - [ ] datagrams
+- [ ] [qlog](https://datatracker.ietf.org/doc/draft-pardue-moq-qlog-moq-events/05/)
+  - [x] control_message_created
+  - [x] control_message_parsed
+  - [x] subgroup_header_created
+  - [x] subgroup_header_parsed
+  - [x] subgroup_object_created
+  - [x] subgroup_object_parsed
+  - [x] subgroup_object_received (custom)
 - interop
   - [ ] [Cloudflare](https://blog.cloudflare.com/moq/)
     - [x] handshake

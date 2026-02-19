@@ -46,6 +46,18 @@ impl SubgroupHeader {
     pub fn track_alias(&self) -> TrackAlias {
         self.track_alias
     }
+
+    pub fn group_id(&self) -> u64 {
+        self.group_id
+    }
+
+    pub fn subgroup_id(&self) -> Option<u64> {
+        self.subgroup_id
+    }
+
+    pub fn publisher_priority(&self) -> u8 {
+        self.publisher_priority
+    }
 }
 
 impl FromBytes for SubgroupHeader {

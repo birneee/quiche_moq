@@ -62,8 +62,20 @@ impl ObjectHeader {
         })
     }
 
+    pub fn id(&self) -> u64 {
+        self.id
+    }
+
     pub fn payload_len(&self) -> usize {
         self.payload_len
+    }
+
+    pub fn extension_headers_len(&self) -> usize {
+        self.extension_headers.len()
+    }
+
+    pub fn status(&self) -> Option<u64> {
+        self.status
     }
 }
 
