@@ -36,6 +36,8 @@ impl RequestErrorMessage {
 impl ControlMessage for RequestErrorMessage {
     const MESSAGE_IDS: &'static [u64] = &[REQUEST_ERROR_MESSAGE_ID];
 
+    fn qlog_type_name(&self) -> &'static str { "request_error" }
+
     fn to_body_bytes(&self, b: &mut OctetsMut, version: Version) -> crate::error::Result<()> {
         b.put_varint(self.request_id)?;
         b.put_varint(self.error_code)?;

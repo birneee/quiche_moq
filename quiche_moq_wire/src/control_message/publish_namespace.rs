@@ -39,6 +39,8 @@ impl PublishNamespaceMessage {
 impl ControlMessage for PublishNamespaceMessage {
     const MESSAGE_IDS: &'static [u64] = &[PUBLISH_NAMESPACE_MESSAGE_ID];
 
+    fn qlog_type_name(&self) -> &'static str { "publish_namespace" }
+
     fn to_body_bytes(&self, b: &mut OctetsMut, version: Version) -> Result<()> {
         match version {
             MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_10 => {},

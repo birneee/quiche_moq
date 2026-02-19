@@ -21,6 +21,8 @@ impl RequestOkMessage {
 impl ControlMessage for RequestOkMessage {
     const MESSAGE_IDS: &'static [u64] = &[REQUEST_OK_MESSAGE_ID];
 
+    fn qlog_type_name(&self) -> &'static str { "request_ok" }
+
     fn to_body_bytes(&self, b: &mut OctetsMut, version: Version) -> crate::error::Result<()> {
         match version {
             MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_10 => {

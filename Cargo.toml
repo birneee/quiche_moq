@@ -42,6 +42,7 @@ http_capsule = { path = "http_capsule" }
 [patch.crates-io]
 quiche = { git="https://github.com/birneee/quiche", branch = "webtransport_streams" }
 octets = { git="https://github.com/birneee/quiche", branch = "webtransport_streams" }
+qlog = { git="https://github.com/birneee/quiche", branch = "webtransport_streams" }
 
 [patch."https://github.com/birneee/quiche_endpoint"]
 quiche_endpoint = { path = "../quiche_endpoint" }

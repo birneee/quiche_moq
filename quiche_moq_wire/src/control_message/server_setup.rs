@@ -32,6 +32,8 @@ impl ControlMessage for ServerSetupMessage {
         }
     }
 
+    fn qlog_type_name(&self) -> &'static str { "server_setup" }
+
     fn to_body_bytes(&self, b: &mut OctetsMut, version: Version) -> crate::error::Result<()> {
         b.put_varint(self.selected_version)?;
         SetupParameters::to_bytes(&self.setup_parameters, b, version)?;

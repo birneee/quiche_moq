@@ -16,6 +16,8 @@ pub struct TrackStatusMessage {
 impl ControlMessage for TrackStatusMessage {
     const MESSAGE_IDS: &'static [u64] = &[TRACK_STATUS_MESSAGE_ID];
 
+    fn qlog_type_name(&self) -> &'static str { "track_status" }
+
     fn to_body_bytes(&self, b: &mut OctetsMut, version: Version) -> crate::error::Result<()> {
         self.track_namespace.to_bytes(b, version)?;
         b.put_varint(self.track_name.len() as u64)?;

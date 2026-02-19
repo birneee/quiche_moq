@@ -1277,10 +1277,12 @@ dependencies = [
  "log",
  "octets",
  "partial-borrow",
+ "qlog",
  "quiche",
  "quiche_moq_wire",
  "quiche_utils",
  "quiche_webtransport",
+ "serde_json",
  "short_buf",
  "smallvec 2.0.0-alpha.12",
 ]

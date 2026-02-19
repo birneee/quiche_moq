@@ -44,6 +44,8 @@ impl SubscribeOkMessage {
 impl ControlMessage for SubscribeOkMessage {
     const MESSAGE_IDS: &'static [u64] = &[SUBSCRIBE_OK_MESSAGE_ID];
 
+    fn qlog_type_name(&self) -> &'static str { "subscribe_ok" }
+
     fn to_body_bytes(&self, b: &mut OctetsMut, version: Version) -> crate::error::Result<()> {
         b.put_varint(self.request_id)?;
         match version {

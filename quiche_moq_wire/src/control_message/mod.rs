@@ -61,6 +61,14 @@ macro_rules! control_message_enum {
                 Err(ProtocolViolation(format!("unexpected control message with id {}", ty)))
             }
         }
+
+        impl ControlMessageEnum {
+            pub fn qlog_type_name(&self) -> &'static str {
+                match self {
+                    $( ControlMessageEnum::$variant(m) => m.qlog_type_name(), )*
+                }
+            }
+        }
     };
 }
 
@@ -207,6 +215,8 @@ pub(crate) trait ControlMessage: Debug + Sized {
     /// The message ID(s) that identify this message type.
     /// Multiple IDs are used for version-specific message IDs.
     const MESSAGE_IDS: &'static [u64];
+
+    fn qlog_type_name(&self) -> &'static str;
 
     /// Returns the message ID to use for encoding based on the version.
     /// Default implementation returns the first ID.

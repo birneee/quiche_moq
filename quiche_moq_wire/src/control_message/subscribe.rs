@@ -52,6 +52,8 @@ impl SubscribeMessage {
 impl ControlMessage for SubscribeMessage {
     const MESSAGE_IDS: &'static [u64] = &[SUBSCRIBE_MESSAGE_ID];
 
+    fn qlog_type_name(&self) -> &'static str { "subscribe" }
+
     fn to_body_bytes(&self, b: &mut OctetsMut, version: Version) -> crate::error::Result<()> {
         self.validate()?;
         b.put_varint(self.request_id)?;

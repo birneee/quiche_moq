@@ -233,6 +233,19 @@ impl MoqTransportSession {
             "moq send control message on stream {}: {:?}",
             control_stream_id, &cm
         );
+        #[cfg(feature = "qlog")]
+        if let Some(qlog) = quic.qlog_streamer() {
+            qlog.add_event_now(qlog::events::JsonEvent {
+                time: 0.0,
+                importance: qlog::events::EventImportance::Core,
+                name: "moqt:control_message_created".into(),
+                data: serde_json::json!({
+                    "stream_id": control_stream_id.into_u64(),
+                    "message": { "message_type": cm.qlog_type_name() },
+                }),
+            })
+            .ok();
+        }
     }
 
     pub fn poll(
@@ -285,6 +298,19 @@ impl MoqTransportSession {
                     }
                     Err(e) => unimplemented!("{:?}", e),
                 };
+                #[cfg(feature = "qlog")]
+                if let Some(qlog) = quic.qlog_streamer() {
+                    qlog.add_event_now(qlog::events::JsonEvent {
+                        time: 0.0,
+                        importance: qlog::events::EventImportance::Core,
+                        name: "moqt:control_message_parsed".into(),
+                        data: serde_json::json!({
+                            "stream_id": control_stream_id.into_u64(),
+                            "message": { "message_type": cm.qlog_type_name() },
+                        }),
+                    })
+                    .ok();
+                }
                 match cm {
                     ControlMessageEnum::ServerSetup(cm) => {
                         assert!(!self.server);

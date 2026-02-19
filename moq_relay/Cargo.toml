@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-quiche_moq = { workspace = true }
+quiche_moq = { workspace = true, features = ["qlog"] }
 quiche_mio_runner = { workspace = true }
 quiche_moq_webtransport_helper = { workspace = true }
 env_logger = "0.11.8"

@@ -3,6 +3,9 @@ name = "quiche_moq"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+qlog = ["dep:qlog", "dep:serde_json", "quiche/qlog"]
+
 [dependencies]
 octets = { workspace = true }
 quiche = { workspace = true }
@@ -13,6 +16,8 @@ log = { workspace = true }
 smallvec = { workspace = true }
 quiche_utils = { workspace = true }
 partial-borrow = "1.0.1"
+qlog = { version = "0.15", optional = true }
+serde_json = { version = "1", optional = true }
 
 [dev-dependencies]
 quiche = { workspace = true, features = ["internal"]}

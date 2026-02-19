@@ -16,6 +16,8 @@ pub struct PublishDoneMessage {
 impl ControlMessage for PublishDoneMessage {
     const MESSAGE_IDS: &'static [u64] = &[PUBLISH_DONE_MESSAGE_ID];
 
+    fn qlog_type_name(&self) -> &'static str { "publish_done" }
+
     fn to_body_bytes(&self, b: &mut OctetsMut, _version: Version) -> crate::error::Result<()> {
         b.put_varint(self.request_id)?;
         b.put_varint(self.status_code)?;
