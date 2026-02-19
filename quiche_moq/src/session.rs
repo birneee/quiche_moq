@@ -6,22 +6,30 @@ use crate::in_track::InTrack;
 use crate::out_stream::OutStream;
 use crate::out_track::OutTrack;
 use crate::pending_subscribe::PendingSubscribe;
+use crate::session::PublishStatus::{Accepted, Pending, Unknown};
 use log::{debug, error, trace};
 use octets::{Octets, OctetsMut};
-use quiche::{h3, Shutdown};
-use partial_borrow::prelude::*;
 use partial_borrow::SplitOff;
+use partial_borrow::prelude::*;
+use quiche::{Shutdown, h3};
 use quiche_moq_wire::ErrorCode;
+use quiche_moq_wire::control_message::subscribe::{FilterType, SubscribeMessage};
+use quiche_moq_wire::control_message::{
+    ClientSetupMessage, ControlMessageEnum, PublishNamespaceMessage, PublishOkMessage,
+    RequestErrorMessage, ServerSetupMessage, SubscribeOkMessage,
+};
+use quiche_moq_wire::object::ObjectHeader;
+use quiche_moq_wire::{
+    DEFAULT_MAX_REQUEST_ID_SETUP_PARAMETER, FromBytes, MOQ_VERSION_DRAFT_07, MOQ_VERSION_DRAFT_11,
+    MOQ_VERSION_DRAFT_12, MOQ_VERSION_DRAFT_13, Namespace, NamespaceTrackname, PROTOCOL_VIOLATION,
+    Parameters, RESET_STREAM_CODE_DELIVERY_TIMEOUT, RequestId, Role, SetupParameters, ToBytes,
+    TrackAlias, Tuple, Version,
+};
+use quiche_utils::stream_id::StreamID;
 use quiche_webtransport as wt;
 use short_buf::ShortBuf;
 use smallvec::SmallVec;
 use std::collections::{HashMap, HashSet};
-use quiche_moq_wire::{FromBytes, Namespace, NamespaceTrackname, Parameters, RequestId, Role, SetupParameters, ToBytes, TrackAlias, Tuple, Version, DEFAULT_MAX_REQUEST_ID_SETUP_PARAMETER, MOQ_VERSION_DRAFT_07, MOQ_VERSION_DRAFT_11, MOQ_VERSION_DRAFT_12, MOQ_VERSION_DRAFT_13, PROTOCOL_VIOLATION, RESET_STREAM_CODE_DELIVERY_TIMEOUT};
-use quiche_moq_wire::control_message::{PublishNamespaceMessage, ClientSetupMessage, ControlMessageEnum, ServerSetupMessage, RequestErrorMessage, SubscribeOkMessage, PublishOkMessage};
-use quiche_moq_wire::control_message::subscribe::{FilterType, SubscribeMessage};
-use quiche_moq_wire::object::ObjectHeader;
-use quiche_utils::stream_id::StreamID;
-use crate::session::PublishStatus::{Accepted, Pending, Unknown};
 
 const INITIAL_CLIENT_REQUEST_ID: RequestId = 0;
 const INITIAL_SERVER_REQUEST_ID: RequestId = 1;
@@ -53,7 +61,10 @@ pub struct MoqTransportSession {
     /// Subscribe requests the peer has not responded to.
     pending_subscribe: HashMap<RequestId, PendingSubscribe>,
     /// Received subscribe responses not yet polled by upper layer
-    pending_subscribe_responses: HashMap<RequestId, core::result::Result<(TrackAlias, SubscribeOkMessage), RequestErrorMessage>>,
+    pending_subscribe_responses: HashMap<
+        RequestId,
+        core::result::Result<(TrackAlias, SubscribeOkMessage), RequestErrorMessage>,
+    >,
     /// Streams that cannot be associated with a track yet because the SUBSCRIBE_OK is not received yet.
     /// https://datatracker.ietf.org/doc/html/draft-ietf-moq-transport-13#name-subgroup-header
     pending_streams: HashMap<TrackAlias, StreamID>,
@@ -119,8 +130,7 @@ impl MoqTransportSession {
                     path: None,
                     max_request_id: Some(100),
                     role: Some(Role::PubSub),
-                    extra_parameters: vec![
-                    ],
+                    extra_parameters: vec![],
                 },
             }),
         );
@@ -202,7 +212,7 @@ impl MoqTransportSession {
     }
 
     fn _send_control_message(
-        s:  &partial!(MoqTransportSession const control_stream_id selected_version config, ! *),
+        s: &partial!(MoqTransportSession const control_stream_id selected_version config, ! *),
         quic: &mut quiche::Connection,
         wt: &mut wt::Connection,
         cm: &ControlMessageEnum,
@@ -212,13 +222,11 @@ impl MoqTransportSession {
         };
         let mut b = [0u8; 100];
         let mut o = OctetsMut::with_slice(&mut b);
-        cm.to_bytes(
-            &mut o,
-            s.selected_version.unwrap_or(s.config.setup_version),
-        )
-        .unwrap();
+        cm.to_bytes(&mut o, s.selected_version.unwrap_or(s.config.setup_version))
+            .unwrap();
         let len = o.off();
-        let n = wt.stream_send(control_stream_id.into(), quic, &b[..len], false)
+        let n = wt
+            .stream_send(control_stream_id.into(), quic, &b[..len], false)
             .unwrap();
         assert_eq!(n, len);
         debug!(
@@ -264,10 +272,17 @@ impl MoqTransportSession {
                     }
                     Err(Error::WT(quiche_webtransport::Error::Done)) => continue,
                     Err(Error::Wire(quiche_moq_wire::Error::ProtocolViolation(_))) => {
-                        wt.close_session(self.webtransport_session_id.into_u64(), PROTOCOL_VIOLATION, "", quic, h3).unwrap();
+                        wt.close_session(
+                            self.webtransport_session_id.into_u64(),
+                            PROTOCOL_VIOLATION,
+                            "",
+                            quic,
+                            h3,
+                        )
+                        .unwrap();
                         self.closed = true;
-                        return
-                    },
+                        return;
+                    }
                     Err(e) => unimplemented!("{:?}", e),
                 };
                 match cm {
@@ -286,8 +301,12 @@ impl MoqTransportSession {
                         let req_id = cm.request_id();
                         let req = self.pending_subscribe.remove(&req_id).unwrap();
                         let track_alias = match self.selected_version.unwrap() {
-                            MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_11 => req.track_alias().unwrap(),
-                            MOQ_VERSION_DRAFT_12..=MOQ_VERSION_DRAFT_13 => cm.track_alias().unwrap(),
+                            MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_11 => {
+                                req.track_alias().unwrap()
+                            }
+                            MOQ_VERSION_DRAFT_12..=MOQ_VERSION_DRAFT_13 => {
+                                cm.track_alias().unwrap()
+                            }
                             _ => unimplemented!(),
                         };
                         self.in_tracks
@@ -298,7 +317,8 @@ impl MoqTransportSession {
                                 .unwrap()
                                 .mark_stream_readable(stream_id);
                         }
-                        self.pending_subscribe_responses.insert(req_id, Ok((track_alias, cm)));
+                        self.pending_subscribe_responses
+                            .insert(req_id, Ok((track_alias, cm)));
                     }
                     ControlMessageEnum::RequestError(cm) => {
                         let req_id = cm.request_id();
@@ -309,9 +329,13 @@ impl MoqTransportSession {
                     ControlMessageEnum::PublishNamespace(cm) => {
                         let request_id = cm.request_id().unwrap(); //todo
                         assert!(request_id <= self.out_max_request_id, "INVALID_REQUEST_ID");
-                        assert_eq!(request_id, self.next_expected_request_id, "INVALID_REQUEST_ID");
+                        assert_eq!(
+                            request_id, self.next_expected_request_id,
+                            "INVALID_REQUEST_ID"
+                        );
                         self.next_expected_request_id += 2;
-                        self.pending_received_publish_namespace.insert(request_id, cm);
+                        self.pending_received_publish_namespace
+                            .insert(request_id, cm);
                     }
                     ControlMessageEnum::ClientSetup(cm) => {
                         assert!(self.server);
@@ -319,7 +343,10 @@ impl MoqTransportSession {
                         assert!(cm.supported_versions.contains(&self.config.setup_version));
                         let version = self.config.setup_version;
                         self.selected_version = Some(version);
-                        self.max_request_id = cm.setup_parameters.max_request_id.unwrap_or(DEFAULT_MAX_REQUEST_ID_SETUP_PARAMETER);
+                        self.max_request_id = cm
+                            .setup_parameters
+                            .max_request_id
+                            .unwrap_or(DEFAULT_MAX_REQUEST_ID_SETUP_PARAMETER);
                         self.send_control_message(
                             quic,
                             wt,
@@ -342,8 +369,12 @@ impl MoqTransportSession {
                         // todo relate to announce and make info available to application
                     }
                     ControlMessageEnum::PublishOk(cm) => {
-                        let pom = self.pending_sent_publish_namespace.remove(&cm.request_id()).unwrap();
-                        self.subscribed_namespaces.insert(pom.take_track_namespace());
+                        let pom = self
+                            .pending_sent_publish_namespace
+                            .remove(&cm.request_id())
+                            .unwrap();
+                        self.subscribed_namespaces
+                            .insert(pom.take_track_namespace());
                     }
                     _ => unimplemented!(),
                 }
@@ -354,7 +385,11 @@ impl MoqTransportSession {
                     None => {
                         self.in_streams.insert(
                             stream_id.into(),
-                            InStream::new(stream_id.into(), self.webtransport_session_id, self.selected_version.unwrap()),
+                            InStream::new(
+                                stream_id.into(),
+                                self.webtransport_session_id,
+                                self.selected_version.unwrap(),
+                            ),
                         );
                         self.in_streams.get_mut(&stream_id.into()).unwrap()
                     }
@@ -390,12 +425,15 @@ impl MoqTransportSession {
         };
         let cm = loop {
             let mut o = Octets::with_slice(self.ctrl_buf.buffer());
-            match ControlMessageEnum::from_bytes(&mut o, self.selected_version.unwrap_or(self.config.setup_version)) {
+            match ControlMessageEnum::from_bytes(
+                &mut o,
+                self.selected_version.unwrap_or(self.config.setup_version),
+            ) {
                 Ok(v) => {
                     self.ctrl_buf.consume(o.off());
                     trace!("received control message {:?}", v);
-                    break v
-                },
+                    break v;
+                }
                 Err(quiche_moq_wire::Error::Octets(octets::BufferTooShortError)) => {
                     self.ctrl_buf.fill(|b| {
                         wt.recv_stream(
@@ -407,8 +445,8 @@ impl MoqTransportSession {
                         )
                     })?;
                     trace!("fill ctrl_buf {:?}", self.ctrl_buf.buffer())
-                },
-                Err(e) => unimplemented!("{:?}", e)
+                }
+                Err(e) => unimplemented!("{:?}", e),
             };
         };
         Ok(cm)
@@ -527,32 +565,30 @@ impl MoqTransportSession {
     /// Process all pending subscription requests via a closure.
     /// Return `SubscriptionRequestAction::Accept` to accept, `Reject(error_code)` to reject,
     /// or `Keep` to defer the decision to a later call.
-    pub fn process_subscriptions_requests<F>(&mut self, mut f: F, quic: &mut quiche::Connection, wt: &mut quiche_webtransport::Connection) where F: FnMut(&RequestId, &SubscribeMessage) -> SubscriptionRequestAction {
-    let (s_iter, s_msg) = SplitOff::<partial!(MoqTransportSession mut pending_received_subscriptions, ! *)>::split_off_mut(self);
-    s_iter.pending_received_subscriptions.retain(|id, sub| {
-            match f(id, sub) {
+    pub fn process_subscriptions_requests<F>(
+        &mut self,
+        mut f: F,
+        quic: &mut quiche::Connection,
+        wt: &mut quiche_webtransport::Connection,
+    ) where
+        F: FnMut(&RequestId, &SubscribeMessage) -> SubscriptionRequestAction,
+    {
+        let (s_iter, s_msg) = SplitOff::<
+            partial!(MoqTransportSession mut pending_received_subscriptions, ! *),
+        >::split_off_mut(self);
+        s_iter
+            .pending_received_subscriptions
+            .retain(|id, sub| match f(id, sub) {
                 SubscriptionRequestAction::Keep => true,
                 SubscriptionRequestAction::Accept => {
-                    Self::_accept_subscription(
-                        s_msg.as_mut(),
-                        sub,
-                        quic,
-                        wt,
-                    );
+                    Self::_accept_subscription(s_msg.as_mut(), sub, quic, wt);
                     false
-                },
+                }
                 SubscriptionRequestAction::Reject(error_code) => {
-                    Self::_reject_subscription(
-                        s_msg.as_ref(),
-                        sub, 
-                        error_code, 
-                        quic, 
-                        wt
-                    );
+                    Self::_reject_subscription(s_msg.as_ref(), sub, error_code, quic, wt);
                     false
-                },
-            }
-        });
+                }
+            });
     }
 
     /// Must be removed from `Self::pending_received_subscriptions` manually
@@ -564,21 +600,25 @@ impl MoqTransportSession {
         wt: &mut wt::Connection,
     ) -> TrackAlias {
         let (out_cm, track_alias) = match *s.selected_version {
-            Some(MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_11) => (ControlMessageEnum::SubscribeOk(SubscribeOkMessage::from(subscribe_message, None)), subscribe_message.track_alias.unwrap()),
+            Some(MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_11) => (
+                ControlMessageEnum::SubscribeOk(SubscribeOkMessage::from(subscribe_message, None)),
+                subscribe_message.track_alias.unwrap(),
+            ),
             Some(MOQ_VERSION_DRAFT_12..=MOQ_VERSION_DRAFT_13) => {
                 let track_alias = *s.next_out_track_alias;
                 *s.next_out_track_alias += 1;
-                (ControlMessageEnum::SubscribeOk(SubscribeOkMessage::from(subscribe_message, Some(track_alias))), track_alias)
-            },
+                (
+                    ControlMessageEnum::SubscribeOk(SubscribeOkMessage::from(
+                        subscribe_message,
+                        Some(track_alias),
+                    )),
+                    track_alias,
+                )
+            }
             Some(_) => unimplemented!(),
             None => unreachable!(),
         };
-        Self::_send_control_message(
-            s.as_ref(),
-            quic,
-            wt,
-            &out_cm,
-        );
+        Self::_send_control_message(s.as_ref(), quic, wt, &out_cm);
         s.out_tracks.insert(track_alias, OutTrack::new());
         track_alias
     }
@@ -594,12 +634,7 @@ impl MoqTransportSession {
             .pending_received_subscriptions
             .remove(&request_id)
             .unwrap();
-        Self::_accept_subscription(
-            self.as_mut(),
-            &cm, 
-            quic, 
-            wt,
-        )
+        Self::_accept_subscription(self.as_mut(), &cm, quic, wt)
     }
 
     /// Must be removed from `Self::pending_received_subscriptions` manually
@@ -608,13 +643,16 @@ impl MoqTransportSession {
         subscribe_message: &SubscribeMessage,
         error_code: u64,
         quic: &mut quiche::Connection,
-        wt: &mut wt::Connection
+        wt: &mut wt::Connection,
     ) {
         Self::_send_control_message(
             s,
-            quic, 
-            wt, 
-            &ControlMessageEnum::RequestError(RequestErrorMessage::from(subscribe_message, error_code))
+            quic,
+            wt,
+            &ControlMessageEnum::RequestError(RequestErrorMessage::from(
+                subscribe_message,
+                error_code,
+            )),
         )
     }
 
@@ -629,28 +667,32 @@ impl MoqTransportSession {
             .pending_received_subscriptions
             .remove(&request_id)
             .unwrap();
-        Self::_reject_subscription(
-            self.as_mut(),
-            &cm,
-            error_code,
-            quic, 
-            wt
-        );
+        Self::_reject_subscription(self.as_mut(), &cm, error_code, quic, wt);
     }
 
     /// Get next unanswered namespace publish
-    pub fn next_pending_namespace_publish(&mut self) -> Option<(&RequestId, &PublishNamespaceMessage)> {
+    pub fn next_pending_namespace_publish(
+        &mut self,
+    ) -> Option<(&RequestId, &PublishNamespaceMessage)> {
         self.pending_received_publish_namespace.iter().next()
     }
 
     /// Accept a namespace publish or announce message from the peer
-    pub fn accept_namespace_publish(&mut self, request_id: RequestId, quic: &mut quiche::Connection, wt: &mut wt::Connection) {
+    pub fn accept_namespace_publish(
+        &mut self,
+        request_id: RequestId,
+        quic: &mut quiche::Connection,
+        wt: &mut wt::Connection,
+    ) {
         self.send_control_message(
             quic,
             wt,
-            &ControlMessageEnum::PublishOk(PublishOkMessage::new(request_id, Parameters(vec![])))
+            &ControlMessageEnum::PublishOk(PublishOkMessage::new(request_id, Parameters(vec![]))),
         );
-        let cm = self.pending_received_publish_namespace.remove(&request_id).unwrap();
+        let cm = self
+            .pending_received_publish_namespace
+            .remove(&request_id)
+            .unwrap();
         self.subscribed_namespaces.insert(cm.take_track_namespace());
     }
 
@@ -728,7 +770,10 @@ impl MoqTransportSession {
         trace!("timeout stream {}", stream_id);
     }
 
-    pub fn poll_subscribe_response(&mut self, request_id: RequestId) -> Option<core::result::Result<(TrackAlias, SubscribeOkMessage), RequestErrorMessage>> {
+    pub fn poll_subscribe_response(
+        &mut self,
+        request_id: RequestId,
+    ) -> Option<core::result::Result<(TrackAlias, SubscribeOkMessage), RequestErrorMessage>> {
         self.pending_subscribe_responses.remove(&request_id)
     }
 
@@ -743,13 +788,12 @@ impl MoqTransportSession {
             Namespace(Tuple(namespace)),
             Parameters(vec![]),
         ));
-        self.send_control_message(
-            conn,
-            wt,
-            &cm,
-        );
-        let ControlMessageEnum::PublishNamespace(cm) = cm else { unreachable!() };
-        self.pending_sent_publish_namespace.insert(self.next_request_id, cm);
+        self.send_control_message(conn, wt, &cm);
+        let ControlMessageEnum::PublishNamespace(cm) = cm else {
+            unreachable!()
+        };
+        self.pending_sent_publish_namespace
+            .insert(self.next_request_id, cm);
         self.next_request_id += 2;
         Ok(())
     }
@@ -757,7 +801,11 @@ impl MoqTransportSession {
     pub fn publish_namespace_status(&self, namespace: &Namespace) -> PublishStatus {
         if self.subscribed_namespaces.contains(namespace) {
             Accepted
-        } else if self.pending_sent_publish_namespace.values().any(|n| n.track_namespace() == namespace) {
+        } else if self
+            .pending_sent_publish_namespace
+            .values()
+            .any(|n| n.track_namespace() == namespace)
+        {
             Pending
         } else {
             Unknown
@@ -774,5 +822,5 @@ pub enum PublishStatus {
 pub enum SubscriptionRequestAction {
     Keep,
     Accept,
-    Reject(ErrorCode)
+    Reject(ErrorCode),
 }
