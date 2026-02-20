@@ -19,6 +19,7 @@ pub use error::Result;
 pub use session::MoqTransportSession;
 pub use session::PublishStatus;
 pub use session::SubscriptionRequestAction;
+pub use quiche_utils::stream_id::StreamID;
 
 
 #[cfg(test)]
@@ -56,16 +57,16 @@ mod test {
         let (mut pipe, mut c_h3, mut c_wt, mut c_moq, mut s_h3, mut s_wt, mut s_moq) = _init_moq_pipe(config);
 
         c_moq.subscribe(
-            &mut pipe.client,
-            &mut c_wt,
             &"n1--t1".parse().unwrap(),
+            &mut c_wt,
+            &mut pipe.client,
         ).unwrap();
 
         pipe.advance().unwrap();
 
-        s_moq.poll(&mut pipe.server, &mut s_h3, &mut s_wt);
+        s_moq.poll(&mut s_wt, &mut s_h3, &mut pipe.server);
         let (request_id, _subscription) = s_moq.subscription_inbox_next().unwrap();
-        let track_alias = s_moq.accept_subscription(&mut pipe.server, &mut s_wt, *request_id);
+        let track_alias = s_moq.accept_subscription(*request_id, &mut s_wt, &mut pipe.server);
         s_moq
             .send_obj(
                 b"hello",
@@ -80,7 +81,7 @@ mod test {
 
         assert!(matches!(c_h3.poll(&mut pipe.client), Err(h3::Error::Done)));
         c_wt.poll(&mut c_h3, &mut pipe.client);
-        c_moq.poll(&mut pipe.client, &mut c_h3, &mut c_wt);
+        c_moq.poll(&mut c_wt, &mut c_h3, &mut pipe.client);
         let track_alias = *c_moq.readable().first().unwrap();
         let _hdr = c_moq
             .read_obj_hdr(track_alias, &mut c_wt, &mut c_h3, &mut pipe.client)

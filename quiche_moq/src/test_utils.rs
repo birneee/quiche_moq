@@ -29,13 +29,13 @@ pub fn _init_moq_pipe(config: Config) -> (
     s_wt.poll(&mut s_h3, &mut pipe.server);
     let session_id = *s_wt.readable_sessions().first().unwrap();
     let mut s_moq = MoqTransportSession::accept(session_id.into(), config.clone());
-    s_moq.poll(&mut pipe.server, &mut s_h3, &mut s_wt);
+    s_moq.poll(&mut s_wt, &mut s_h3, &mut pipe.server);
     assert!(s_moq.initialized());
 
     pipe.advance().unwrap();
 
     c_wt.poll(&mut c_h3, &mut pipe.client);
-    c_moq.poll(&mut pipe.client, &mut c_h3, &mut c_wt);
+    c_moq.poll(&mut c_wt, &mut c_h3, &mut pipe.client);
     assert!(c_moq.initialized());
 
     (pipe, c_h3, c_wt, c_moq, s_h3, s_wt, s_moq)

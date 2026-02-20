@@ -266,7 +266,7 @@ fn post_handle_recvs_conn(
     mut moq: MoqHandle<'_>,
     app_data: &mut AppData,
 ) {
-    moq.process_received_subscriptions(|request_id, cm| {
+    moq.process_subscription_requests(|request_id, cm| {
         let nt = &cm.namespace_trackname;
         // Skip subscriptions already queued from a previous frame.
         if app_data.subscriptions.get(nt)

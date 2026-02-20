@@ -88,9 +88,9 @@ fn post_handle_recvs(runner: &mut Runner) {
         if moq_session.initialized() && !conn.app_data.subscribed {
             info!("subscribe clock second");
             moq_session.subscribe(
-                quic_conn,
-                wt_conn,
                 &"testsrc--mp4".parse().unwrap(),
+                wt_conn,
+                quic_conn,
             ).unwrap();
             conn.app_data.subscribed = true;
         }

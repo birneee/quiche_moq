@@ -198,11 +198,11 @@ fn post_handle_recvs(runner: &mut Runner) {
                 conn.app_data.moq_session.as_mut().unwrap()
             }
         };
-        moq.poll(quic_conn, h3_conn, wt_conn);
+        moq.poll(wt_conn, h3_conn, quic_conn);
         while let Some((request_id, sub)) = moq.subscription_inbox_next() {
             assert_eq!(sub.track_namespace().0.0, [b"testsrc"]);
             assert_eq!(sub.track_name(), b"mp4");
-            let track_alias = moq.accept_subscription(quic_conn, wt_conn, *request_id);
+            let track_alias = moq.accept_subscription(*request_id, wt_conn, quic_conn);
             conn.app_data
                 .tracks
                 .insert(track_alias, Mp4TrackState::new(track_alias));

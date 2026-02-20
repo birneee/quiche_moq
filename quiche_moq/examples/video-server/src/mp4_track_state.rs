@@ -87,7 +87,7 @@ impl Mp4TrackState {
                         {
                             Ok(_) => {}
                             Err(moq::Error::UnfinishedPayload) => {
-                                moq.timeout_stream(self.track_alias, wt, quic);
+                                moq.timeout_stream(self.track_alias, quic);
                                 continue;
                             }
                             Err(e) => unimplemented!("{:?}", e),

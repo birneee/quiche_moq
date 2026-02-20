@@ -175,7 +175,7 @@ impl MoqWebTransportHelper {
                 } => {
                     Self::h3_poll_expect_nothing(h3_conn, quic_conn);
                     wt_conn.poll(h3_conn, quic_conn);
-                    moq_session.poll(quic_conn, h3_conn, wt_conn);
+                    moq_session.poll(wt_conn, h3_conn, quic_conn);
                     if !moq_session.initialized() {
                         break 'conn; // not ready for moq
                     }
@@ -198,7 +198,7 @@ impl MoqWebTransportHelper {
                 } => {
                     Self::h3_poll_expect_nothing(h3_conn, quic_conn);
                     wt_conn.poll(h3_conn, quic_conn);
-                    moq_session.poll(quic_conn, h3_conn, wt_conn);
+                    moq_session.poll(wt_conn, h3_conn, quic_conn);
                     break 'conn;
                 }
             }

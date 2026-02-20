@@ -1,11 +1,14 @@
 use std::collections::HashMap;
 use quiche::h3;
-use quiche_moq as moq;
-use quiche_moq::{MoqTransportSession, SubscriptionRequestAction};
-use quiche_moq::wire::{NamespaceTrackname, Namespace, RequestId, TrackAlias};
-use quiche_moq::wire::control_message::{PublishNamespaceMessage, RequestErrorMessage, SubscribeMessage, SubscribeOkMessage};
+use quiche_moq::{MoqTransportSession, PublishStatus, Result, StreamID, SubscriptionRequestAction};
+use quiche_moq::wire::{Namespace, NamespaceTrackname, RequestId, TrackAlias};
+use quiche_moq::wire::control_message::{
+    PublishNamespaceMessage, RequestErrorMessage, SubscribeMessage, SubscribeOkMessage,
+};
 use quiche_moq::wire::object::ObjectHeader;
+use quiche_moq::wire::subgroup::SubgroupHeader;
 use quiche_webtransport as wt;
+use smallvec::SmallVec;
 
 /// Temporary handle that bundles all connection references for ergonomic API calls.
 /// Created by calling `MoqWebTransportHelper::moq_handle()`.
@@ -17,122 +20,5 @@ pub struct MoqHandle<'a> {
 }
 
 impl<'a> MoqHandle<'a> {
-    /// Subscribe to a track
-    pub fn subscribe(&mut self, namespace_trackname: &NamespaceTrackname) -> moq::Result<RequestId> {
-        self.session.subscribe(self.quic, self.wt, namespace_trackname)
-    }
-
-    /// Poll for a subscribe response
-    pub fn poll_subscribe_response(&mut self, request_id: RequestId) -> Option<core::result::Result<(TrackAlias, SubscribeOkMessage), RequestErrorMessage>> {
-        self.session.poll_subscribe_response(request_id)
-    }
-
-    /// Send a complete MoQ object on a track
-    pub fn send_obj(&mut self, buf: &[u8], track_alias: TrackAlias) -> moq::Result<()> {
-        self.session.send_obj(buf, track_alias, self.wt, self.h3, self.quic)
-    }
-
-    /// Send just the object header (for streaming large objects).
-    /// Auto-increments object ID within the current group.
-    pub fn send_obj_hdr(&mut self, size: usize, track_alias: TrackAlias) -> moq::Result<()> {
-        self.session.send_obj_hdr(size, track_alias, self.wt, self.h3, self.quic)
-    }
-
-    /// Send just the object header with explicit group/subgroup/object IDs.
-    /// See `Session::send_obj_hdr_with` for semantics of each parameter.
-    pub fn send_obj_hdr_with(&mut self, group_id: Option<u64>, subgroup_id: Option<u64>, object_id: Option<u64>, size: usize, track_alias: TrackAlias) -> moq::Result<()> {
-        self.session.send_obj_hdr_with(group_id, subgroup_id, object_id, size, track_alias, self.wt, self.h3, self.quic)
-    }
-
-    /// Returns the subgroup header of the current incoming stream for `track_alias`.
-    /// Valid after a successful `read_obj_hdr` call.
-    pub fn subgroup_header(&self, track_alias: TrackAlias) -> Option<&moq::wire::subgroup::SubgroupHeader> {
-        self.session.subgroup_header(track_alias)
-    }
-
-    /// Send object payload (after sending header)
-    pub fn send_obj_pld(&mut self, buf: &[u8], track_alias: TrackAlias) -> moq::Result<usize> {
-        self.session.send_obj_pld(buf, track_alias, self.wt, self.quic)
-    }
-
-    /// Read an object header from a track
-    pub fn read_obj_hdr(&mut self, track_alias: TrackAlias) -> moq::Result<ObjectHeader> {
-        self.session.read_obj_hdr(track_alias, self.wt, self.h3, self.quic)
-    }
-
-    /// Read object payload (after reading header)
-    pub fn read_obj_pld(&mut self, buf: &mut [u8], track_alias: TrackAlias) -> moq::Result<usize> {
-        self.session.read_obj_pld(buf, track_alias, self.wt, self.h3, self.quic)
-    }
-
-    /// Get a pending subscription request from the peer if available.
-    pub fn subscription_inbox_next(&self) -> Option<(&RequestId, &SubscribeMessage)> {
-        self.session.subscription_inbox_next()
-    }
-
-    /// Pending subscription requests.
-    /// Use `accept_subscription` to accept it.
-    /// Or `reject_subscription`.
-    pub fn pending_received_subscriptions(&self) -> &HashMap<RequestId, SubscribeMessage> {
-        self.session.pending_received_subscriptions()
-    }
-
-    /// Process all pending subscription requests via a closure.
-    /// Return `SubscriptionRequestAction::Accept` to accept, `Reject(code)` to reject,
-    /// or `Keep` to defer the decision to a later call.
-    pub fn process_received_subscriptions<F>(&mut self, f: F)
-    where F: FnMut(&RequestId, &SubscribeMessage) -> SubscriptionRequestAction
-    {
-        self.session.process_subscriptions_requests(f, self.quic, self.wt)
-    }
-
-    /// Accept a subscription and create an outgoing track
-    pub fn accept_subscription(&mut self, request_id: RequestId) -> TrackAlias {
-        self.session.accept_subscription(self.quic, self.wt, request_id)
-    }
-
-    /// Reject a subscription from the peer
-    pub fn reject_subscription(&mut self, request_id: RequestId, error_code: u64) {
-        self.session.reject_subscription(self.quic, self.wt, request_id, error_code)
-    }
-
-    /// Get the next pending namespace publish request
-    pub fn next_pending_namespace_publish(&mut self) -> Option<(&RequestId, &PublishNamespaceMessage)> {
-        self.session.next_pending_namespace_publish()
-    }
-
-    /// Accept a namespace publish request
-    pub fn accept_namespace_publish(&mut self, request_id: RequestId) {
-        self.session.accept_namespace_publish(request_id, self.quic, self.wt)
-    }
-
-    /// Publish a namespace
-    pub fn publish_namespace(&mut self, namespace: Vec<Vec<u8>>) -> moq::Result<()> {
-        self.session.publish_namespace(self.quic, self.wt, namespace)
-    }
-
-    /// Check publish status of a namespace
-    pub fn publish_namespace_status(&self, namespace: &Namespace) -> moq::PublishStatus {
-        self.session.publish_namespace_status(namespace)
-    }
-
-    /// Cancel sending on stream with Delivery Timeout
-    pub fn timeout_stream(&mut self, track_alias: TrackAlias) {
-        self.session.timeout_stream(track_alias, self.wt, self.quic)
-    }
-
-    /// Get remaining payload bytes for current object
-    pub fn remaining_object_payload(&self, track_alias: TrackAlias) -> moq::Result<usize> {
-        self.session.remaining_object_payload(track_alias)
-    }
-
-    /// Get readable track aliases
-    pub fn readable(&self) -> smallvec::SmallVec<TrackAlias, 8> {
-        self.session.readable()
-    }
-
-    /// Get writable track aliases
-    pub fn writable(&self) -> smallvec::SmallVec<TrackAlias, 8> {
-        self.session.writable()
-    }
+    quiche_moq::moq_handle_impl!();
 }

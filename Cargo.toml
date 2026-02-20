@@ -3,6 +3,7 @@ members = [
     "http_capsule",
     "moq_relay",
     "moq_utils",
+    "quiche_moq_macros",
     "quiche_h3_utils",
     "quiche_moq",
     "quiche_moq/examples/*",
@@ -37,6 +38,7 @@ short_buf = { path = "short_buf" }
 smallvec = "2.0.0-alpha.11"
 url = "2.5.7"
 quiche_moq_webtransport_helper = { path="quiche_moq_webtransport_helper" }
+quiche_moq_macros = { path="quiche_moq_macros" }
 http_capsule = { path = "http_capsule" }
 
 [patch.crates-io]

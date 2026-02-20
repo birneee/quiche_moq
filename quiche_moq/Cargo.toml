@@ -7,6 +7,7 @@ edition = "2024"
 qlog = ["dep:qlog", "dep:serde_json", "quiche/qlog"]
 
 [dependencies]
+quiche_moq_macros = { workspace = true }
 octets = { workspace = true }
 quiche = { workspace = true }
 quiche_webtransport = { workspace = true }

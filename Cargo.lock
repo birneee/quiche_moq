@@ -1279,12 +1279,22 @@ dependencies = [
  "partial-borrow",
  "qlog",
  "quiche",
+ "quiche_moq_macros",
  "quiche_moq_wire",
  "quiche_utils",
  "quiche_webtransport",
  "serde_json",
  "short_buf",
  "smallvec 2.0.0-alpha.12",
+]
+
+[[package]]
+name = "quiche_moq_macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.114",
 ]
 
 [[package]]

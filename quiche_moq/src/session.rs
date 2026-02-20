@@ -80,6 +80,7 @@ pub struct MoqTransportSession {
     pending_sent_publish_namespace: HashMap<RequestId, PublishNamespaceMessage>,
 }
 
+#[quiche_moq_macros::generate_moq_handle]
 impl MoqTransportSession {
     /// Control stream is opened and the setup message has been exchanged.
     pub fn initialized(&self) -> bool {
@@ -170,9 +171,9 @@ impl MoqTransportSession {
     /// Returns the request_id
     pub fn subscribe(
         &mut self,
-        conn: &mut quiche::Connection,
-        wt: &mut wt::Connection,
         namespace_trackname: &NamespaceTrackname,
+        wt: &mut wt::Connection,
+        quic: &mut quiche::Connection,
     ) -> Result<RequestId> {
         if self.next_request_id > self.max_request_id && !self.config.ignore_max_request_quota {
             return Err(Error::RequestBlocked);
@@ -181,7 +182,7 @@ impl MoqTransportSession {
         let request_id = self.next_request_id;
         let track_alias = Some(request_id);
         self.send_control_message(
-            conn,
+            quic,
             wt,
             &ControlMessageEnum::Subscribe(SubscribeMessage {
                 request_id,
@@ -251,9 +252,9 @@ impl MoqTransportSession {
 
     pub fn poll(
         &mut self,
-        quic: &mut quiche::Connection,
-        h3: &mut h3::Connection,
         wt: &mut quiche_webtransport::Connection,
+        h3: &mut h3::Connection,
+        quic: &mut quiche::Connection,
     ) {
         trace!("poll moq");
 
@@ -629,11 +630,11 @@ impl MoqTransportSession {
     /// Process all pending subscription requests via a closure.
     /// Return `SubscriptionRequestAction::Accept` to accept, `Reject(error_code)` to reject,
     /// or `Keep` to defer the decision to a later call.
-    pub fn process_subscriptions_requests<F>(
+    pub fn process_subscription_requests<F>(
         &mut self,
         mut f: F,
-        quic: &mut quiche::Connection,
         wt: &mut quiche_webtransport::Connection,
+        quic: &mut quiche::Connection,
     ) where
         F: FnMut(&RequestId, &SubscribeMessage) -> SubscriptionRequestAction,
     {
@@ -690,9 +691,9 @@ impl MoqTransportSession {
     /// Accept a subscription received from the peer
     pub fn accept_subscription(
         &mut self,
-        quic: &mut quiche::Connection,
-        wt: &mut wt::Connection,
         request_id: RequestId,
+        wt: &mut wt::Connection,
+        quic: &mut quiche::Connection,
     ) -> TrackAlias {
         let cm = self
             .pending_received_subscriptions
@@ -722,10 +723,10 @@ impl MoqTransportSession {
 
     pub fn reject_subscription(
         &mut self,
-        quic: &mut quiche::Connection,
-        wt: &mut wt::Connection,
         request_id: RequestId,
         error_code: u64,
+        wt: &mut wt::Connection,
+        quic: &mut quiche::Connection,
     ) {
         let cm = self
             .pending_received_subscriptions
@@ -745,8 +746,8 @@ impl MoqTransportSession {
     pub fn accept_namespace_publish(
         &mut self,
         request_id: RequestId,
-        quic: &mut quiche::Connection,
         wt: &mut wt::Connection,
+        quic: &mut quiche::Connection,
     ) {
         self.send_control_message(
             quic,
@@ -826,7 +827,6 @@ impl MoqTransportSession {
     pub fn timeout_stream(
         &mut self,
         track_alias: TrackAlias,
-        _wt: &mut wt::Connection,
         quic: &mut quiche::Connection,
     ) {
         let track = self.out_tracks.get_mut(&track_alias).unwrap();
@@ -851,16 +851,16 @@ impl MoqTransportSession {
 
     pub fn publish_namespace(
         &mut self,
-        conn: &mut quiche::Connection,
-        wt: &mut wt::Connection,
         namespace: Vec<Vec<u8>>,
+        wt: &mut wt::Connection,
+        quic: &mut quiche::Connection,
     ) -> Result<()> {
         let cm = ControlMessageEnum::PublishNamespace(PublishNamespaceMessage::new(
             Some(self.next_request_id),
             Namespace(Tuple(namespace)),
             Parameters(vec![]),
         ));
-        self.send_control_message(conn, wt, &cm);
+        self.send_control_message(quic, wt, &cm);
         let ControlMessageEnum::PublishNamespace(cm) = cm else {
             unreachable!()
         };
