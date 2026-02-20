@@ -1,7 +1,8 @@
 use crate::bytes::{FromBytes, ToBytes};
-use crate::key_value_pair::KvpCtx;
+use crate::key_value_pair::{KeyValuePair, KvpCtx};
+use crate::key_value_pairs::KeyValuePairs;
 use crate::parameter::ParameterValue;
-use crate::{Parameter, Version};
+use crate::{Parameter, Version, MOQ_VERSION_DRAFT_10};
 use octets::{Octets, OctetsMut};
 
 #[derive(Debug, Clone)]
@@ -46,30 +47,40 @@ impl Parameters {
 }
 
 impl FromBytes for Parameters {
-    /// Reads a count-prefixed sequence of parameters. In draft-15+ each parameter's type is
-    /// delta-encoded relative to the previous one; `KvpCtx` handles this transparently.
+    /// Reads a count-prefixed sequence of parameters.
+    /// For draft-07–10 uses the old (ty + len + bytes) encoding via `Parameter::from_bytes`.
+    /// For draft-11+ delegates to `KeyValuePairs` which handles delta-decoding for draft-15+.
     fn from_bytes(b: &mut Octets, version: Version) -> crate::error::Result<Self> {
         let count = b.get_varint()?;
-        let mut params = vec![];
-        let mut prev_key = 0u64;
-        for _ in 0..count {
-            let p = Parameter::from_bytes(b, KvpCtx::new(version).with_previous_key(prev_key))?;
-            prev_key = p.ty;
-            params.push(p);
+        if version <= MOQ_VERSION_DRAFT_10 {
+            let mut params = vec![];
+            let mut prev_key = 0u64;
+            for _ in 0..count {
+                let p = Parameter::from_bytes(b, KvpCtx::new(version).with_previous_key(prev_key))?;
+                prev_key = p.ty;
+                params.push(p);
+            }
+            Ok(Self(params))
+        } else {
+            let kvps = KeyValuePairs::from_bytes(b, (version, count))?;
+            Ok(Self(kvps.0.into_iter().map(Parameter::from).collect()))
         }
-        Ok(Self(params))
     }
 }
 
 impl ToBytes for Parameters {
-    /// Writes a count-prefixed sequence of parameters. In draft-15+ each parameter's type is
-    /// delta-encoded relative to the previous one; `KvpCtx` handles this transparently.
+    /// Writes a count-prefixed sequence of parameters.
+    /// For draft-07–10 uses the old (ty + len + bytes) encoding via `Parameter::to_bytes`.
+    /// For draft-11+ delegates to `KeyValuePairs` which sorts by type ID for draft-15+.
     fn to_bytes(&self, b: &mut OctetsMut, version: Version) -> crate::error::Result<()> {
         b.put_varint(self.0.len() as u64)?;
-        let mut prev_key = 0u64;
-        for p in &self.0 {
-            p.to_bytes(b, KvpCtx::new(version).with_previous_key(prev_key))?;
-            prev_key = p.ty;
+        if version <= MOQ_VERSION_DRAFT_10 {
+            for p in &self.0 {
+                p.to_bytes(b, KvpCtx::new(version))?;
+            }
+        } else {
+            let kvps: Vec<KeyValuePair> = self.0.iter().cloned().map(KeyValuePair::from).collect();
+            KeyValuePairs(kvps).to_bytes(b, version)?;
         }
         Ok(())
     }

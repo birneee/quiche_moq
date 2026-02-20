@@ -1,6 +1,6 @@
 use crate::bytes::{FromBytes, ToBytes};
 use crate::error::Result;
-use crate::{Parameters, RequestId, Version, PUBLISH_NAMESPACE_MESSAGE_ID, MOQ_VERSION_DRAFT_07, MOQ_VERSION_DRAFT_10, MOQ_VERSION_DRAFT_11, MOQ_VERSION_DRAFT_13};
+use crate::{Parameters, RequestId, Version, PUBLISH_NAMESPACE_MESSAGE_ID, MOQ_VERSION_DRAFT_07, MOQ_VERSION_DRAFT_10, MOQ_VERSION_DRAFT_11, MOQ_VERSION_DRAFT_16};
 use octets::{Octets, OctetsMut};
 use crate::control_message::ControlMessage;
 use crate::namespace::Namespace;
@@ -44,7 +44,7 @@ impl ControlMessage for PublishNamespaceMessage {
     fn to_body_bytes(&self, b: &mut OctetsMut, version: Version) -> Result<()> {
         match version {
             MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_10 => {},
-            MOQ_VERSION_DRAFT_11..=MOQ_VERSION_DRAFT_13 => {
+            MOQ_VERSION_DRAFT_11..=MOQ_VERSION_DRAFT_16 => {
                 b.put_varint(self.request_id.unwrap())?;
             }
             _ => unimplemented!()
@@ -57,7 +57,7 @@ impl ControlMessage for PublishNamespaceMessage {
     fn from_body_bytes(b: &mut Octets, version: Version) -> Result<Self> {
         let request_id = match version {
             MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_10 => None,
-            MOQ_VERSION_DRAFT_11..=MOQ_VERSION_DRAFT_13 => {
+            MOQ_VERSION_DRAFT_11..=MOQ_VERSION_DRAFT_16 => {
                 Some(b.get_varint()?)
             }
             _ => unimplemented!()

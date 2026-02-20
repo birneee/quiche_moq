@@ -1,5 +1,5 @@
 use crate::bytes::{FromBytes, ToBytes};
-use crate::{SetupParameters, Version, CLIENT_SETUP_MESSAGE_ID, CLIENT_SETUP_MESSAGE_ID_VERSION_UNTIL_10, MOQ_VERSION_DRAFT_07, MOQ_VERSION_DRAFT_10, MOQ_VERSION_DRAFT_11, MOQ_VERSION_DRAFT_13};
+use crate::{CLIENT_SETUP_MESSAGE_ID, CLIENT_SETUP_MESSAGE_ID_VERSION_UNTIL_10, MOQ_VERSION_DRAFT_07, MOQ_VERSION_DRAFT_10, MOQ_VERSION_DRAFT_11, MOQ_VERSION_DRAFT_16, SetupParameters, Version};
 use octets::{Octets, OctetsMut};
 use crate::control_message::ControlMessage;
 
@@ -18,7 +18,7 @@ impl ControlMessage for ClientSetupMessage {
     fn message_id_for_version(version: Version) -> u64 {
         match version {
             MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_10 => CLIENT_SETUP_MESSAGE_ID_VERSION_UNTIL_10,
-            MOQ_VERSION_DRAFT_11..=MOQ_VERSION_DRAFT_13 => CLIENT_SETUP_MESSAGE_ID,
+            MOQ_VERSION_DRAFT_11..=MOQ_VERSION_DRAFT_16 => CLIENT_SETUP_MESSAGE_ID,
             _ => unimplemented!()
         }
     }

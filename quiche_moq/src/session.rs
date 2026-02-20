@@ -22,7 +22,7 @@ use quiche_moq_wire::object::ObjectHeader;
 use quiche_moq_wire::subgroup::SubgroupHeader;
 use quiche_moq_wire::{
     DEFAULT_MAX_REQUEST_ID_SETUP_PARAMETER, FromBytes, Location, MOQ_VERSION_DRAFT_07,
-    MOQ_VERSION_DRAFT_11, MOQ_VERSION_DRAFT_12, MOQ_VERSION_DRAFT_13, Namespace, NamespaceTrackname,
+    MOQ_VERSION_DRAFT_11, MOQ_VERSION_DRAFT_12, MOQ_VERSION_DRAFT_16, Namespace, NamespaceTrackname,
     PROTOCOL_VIOLATION, Parameters, RESET_STREAM_CODE_DELIVERY_TIMEOUT, RequestId, Role,
     SetupParameters, ToBytes, TrackAlias, Tuple, Version,
 };
@@ -337,7 +337,7 @@ impl MoqTransportSession {
                             MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_11 => {
                                 req.track_alias().unwrap()
                             }
-                            MOQ_VERSION_DRAFT_12..=MOQ_VERSION_DRAFT_13 => {
+                            MOQ_VERSION_DRAFT_12..=MOQ_VERSION_DRAFT_16 => {
                                 cm.track_alias().unwrap()
                             }
                             _ => unimplemented!(),
@@ -675,7 +675,7 @@ impl MoqTransportSession {
                 ControlMessageEnum::SubscribeOk(SubscribeOkMessage::from(subscribe_message, None, largest_location)),
                 subscribe_message.track_alias.unwrap(),
             ),
-            Some(MOQ_VERSION_DRAFT_12..=MOQ_VERSION_DRAFT_13) => {
+            Some(MOQ_VERSION_DRAFT_12..=MOQ_VERSION_DRAFT_16) => {
                 let track_alias = *s.next_out_track_alias;
                 *s.next_out_track_alias += 1;
                 (

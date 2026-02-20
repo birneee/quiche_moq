@@ -1,5 +1,5 @@
 use crate::bytes::{FromBytes, ToBytes};
-use crate::{Parameter, RequestId, Version, MAX_REQUEST_ID_SETUP_PARAMETER_ID, MOQ_VERSION_DRAFT_07, MOQ_VERSION_DRAFT_10, MOQ_VERSION_DRAFT_11, MOQ_VERSION_DRAFT_13, PATH_SETUP_PARAMETER_ID, ROLE_SETUP_PARAMETER_ID};
+use crate::{Parameter, Parameters, RequestId, Version, MAX_REQUEST_ID_SETUP_PARAMETER_ID, MOQ_VERSION_DRAFT_07, MOQ_VERSION_DRAFT_10, MOQ_VERSION_DRAFT_11, PATH_SETUP_PARAMETER_ID, ROLE_SETUP_PARAMETER_ID};
 use octets::{Octets, OctetsMut};
 use crate::key_value_pair::KvpCtx;
 use crate::parameter::ParameterValue;
@@ -11,16 +11,6 @@ pub struct SetupParameters {
     pub max_request_id: Option<RequestId>,
     pub role: Option<Role>,
     pub extra_parameters: Vec<Parameter>,
-}
-
-impl SetupParameters {
-
-    fn number_of_parameters(&self) -> usize {
-        self.path.as_ref().map_or(0, |_| 1)
-            + self.max_request_id.as_ref().map_or(0, |_| 1)
-            + self.role.as_ref().map_or(0, |_| 1)
-            + self.extra_parameters.len()
-    }
 }
 
 impl FromBytes for SetupParameters {
@@ -42,7 +32,7 @@ impl FromBytes for SetupParameters {
                     assert_eq!(v.len(), 1);
                     s.max_request_id = Some(v[0] as u64);
                 }
-                (MAX_REQUEST_ID_SETUP_PARAMETER_ID, ParameterValue::Varint(v), MOQ_VERSION_DRAFT_11..=MOQ_VERSION_DRAFT_13) => {
+                (MAX_REQUEST_ID_SETUP_PARAMETER_ID, ParameterValue::Varint(v), MOQ_VERSION_DRAFT_11..) => {
                     s.max_request_id = Some(*v)
                 }
                 (PATH_SETUP_PARAMETER_ID, ParameterValue::Bytes(v), _) => {
@@ -63,25 +53,17 @@ impl FromBytes for SetupParameters {
 impl ToBytes for SetupParameters {
     /// including the length varint
     fn to_bytes(&self, b: &mut OctetsMut, version: Version) -> crate::error::Result<()> {
-        b.put_varint(self.number_of_parameters() as u64)?;
-        let mut prev_key = 0u64;
-        let mut write_param = |b: &mut OctetsMut, param: &Parameter| -> crate::error::Result<()> {
-            param.to_bytes(b, KvpCtx::new(version).with_previous_key(prev_key))?;
-            prev_key = param.ty;
-            Ok(())
-        };
+        let mut params = vec![];
         if let Some(path) = &self.path {
-            write_param(b, &Parameter::new_bytes(PATH_SETUP_PARAMETER_ID, path.clone()))?;
+            params.push(Parameter::new_bytes(PATH_SETUP_PARAMETER_ID, path.clone()));
         }
         if let Some(max_request_id) = self.max_request_id {
-            write_param(b, &Parameter::new_varint(MAX_REQUEST_ID_SETUP_PARAMETER_ID, max_request_id))?;
+            params.push(Parameter::new_varint(MAX_REQUEST_ID_SETUP_PARAMETER_ID, max_request_id));
         }
         if let Some(role) = &self.role {
-            write_param(b, &Parameter::new_varint(ROLE_SETUP_PARAMETER_ID, role.to_id()))?;
+            params.push(Parameter::new_varint(ROLE_SETUP_PARAMETER_ID, role.to_id()));
         }
-        for param in &self.extra_parameters {
-            write_param(b, param)?;
-        }
-        Ok(())
+        params.extend(self.extra_parameters.iter().cloned());
+        Parameters(params).to_bytes(b, version)
     }
 }

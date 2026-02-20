@@ -1,5 +1,5 @@
 use crate::bytes::{FromBytes, ToBytes};
-use crate::{TrackAlias, Version, MOQ_VERSION_DRAFT_07, MOQ_VERSION_DRAFT_08, MOQ_VERSION_DRAFT_10, MOQ_VERSION_DRAFT_11, MOQ_VERSION_DRAFT_13, STREAM_HEADER_SUBGROUP_STREAM_TYPE_ID, SUBGROUP_UNI_STREAM_TYPE_IDS};
+use crate::{TrackAlias, Version, MOQ_VERSION_DRAFT_07, MOQ_VERSION_DRAFT_08, MOQ_VERSION_DRAFT_10, MOQ_VERSION_DRAFT_11, MOQ_VERSION_DRAFT_16, STREAM_HEADER_SUBGROUP_STREAM_TYPE_ID, SUBGROUP_UNI_STREAM_TYPE_IDS};
 use octets::{Octets, OctetsMut};
 
 #[derive(Debug, Eq, PartialEq)]
@@ -15,7 +15,7 @@ impl SubgroupHeader {
     pub fn new(track_alias: TrackAlias, group_id: u64, subgroup_id: u64, version: Version) -> Self {
         let ty = match version {
             MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_10 => STREAM_HEADER_SUBGROUP_STREAM_TYPE_ID,
-            MOQ_VERSION_DRAFT_11..=MOQ_VERSION_DRAFT_13 => 0xD, //todo support other types
+            MOQ_VERSION_DRAFT_11..=MOQ_VERSION_DRAFT_16 => 0xD, //todo support other types
             _ => unimplemented!()
         };
         Self {
@@ -67,21 +67,21 @@ impl FromBytes for SubgroupHeader {
             MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_10 => {
                 assert_eq!(ty, STREAM_HEADER_SUBGROUP_STREAM_TYPE_ID)
             }
-            MOQ_VERSION_DRAFT_11..=MOQ_VERSION_DRAFT_13 => {
+            MOQ_VERSION_DRAFT_11..=MOQ_VERSION_DRAFT_16 => {
                 assert!(SUBGROUP_UNI_STREAM_TYPE_IDS.contains(&ty));
             }
             _ => unimplemented!()
         }
         let _subscribe_id = match version {
             MOQ_VERSION_DRAFT_07 => Some(b.get_varint()?), // todo not sure, this is not in the spec, but cloudflare uses it, https://github.com/englishm/moq-rs/blob/ebc843de8504e37d36c3134a1181513ebdf7a34a/moq-transport/src/data/subgroup.rs
-            MOQ_VERSION_DRAFT_08..=MOQ_VERSION_DRAFT_13 => None,
+            MOQ_VERSION_DRAFT_08..=MOQ_VERSION_DRAFT_16 => None,
             _ => unimplemented!()
         };
         let track_alias = b.get_varint()?;
         let group_id = b.get_varint()?;
         let subgroup_id = match version {
             MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_10 => Some(b.get_varint()?),
-            MOQ_VERSION_DRAFT_11..=MOQ_VERSION_DRAFT_13 => {
+            MOQ_VERSION_DRAFT_11..=MOQ_VERSION_DRAFT_16 => {
                 if Self::subgroup_id_present(ty) {
                     Some(b.get_varint()?)
                 } else if Self::subgroup_id_implicit_zero(ty) {
@@ -109,7 +109,7 @@ impl  ToBytes for SubgroupHeader {
             MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_10 => {
                 assert_eq!(self.ty, STREAM_HEADER_SUBGROUP_STREAM_TYPE_ID)
             }
-            MOQ_VERSION_DRAFT_11..=MOQ_VERSION_DRAFT_13 => {
+            MOQ_VERSION_DRAFT_11..=MOQ_VERSION_DRAFT_16 => {
                 assert!(SUBGROUP_UNI_STREAM_TYPE_IDS.contains(&self.ty));
             }
             _ => unimplemented!()
@@ -117,14 +117,14 @@ impl  ToBytes for SubgroupHeader {
         b.put_varint(self.ty)?;
         match version {
             MOQ_VERSION_DRAFT_07 => { b.put_varint(0)?; }, // todo not sure, this is not in the spec, but cloudflare uses it, https://github.com/englishm/moq-rs/blob/ebc843de8504e37d36c3134a1181513ebdf7a34a/moq-transport/src/data/subgroup.rs
-            MOQ_VERSION_DRAFT_08..=MOQ_VERSION_DRAFT_13 => {},
+            MOQ_VERSION_DRAFT_08..=MOQ_VERSION_DRAFT_16 => {},
             _ => unimplemented!()
         }
         b.put_varint(self.track_alias)?;
         b.put_varint(self.group_id)?;
         match version {
             MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_10 => { b.put_varint(self.subgroup_id.unwrap())?; },
-            MOQ_VERSION_DRAFT_11..=MOQ_VERSION_DRAFT_13 => {
+            MOQ_VERSION_DRAFT_11..=MOQ_VERSION_DRAFT_16 => {
                 if Self::subgroup_id_present(self.ty) {
                     b.put_varint(self.subgroup_id.unwrap())?;
                 }

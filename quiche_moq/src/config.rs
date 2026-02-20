@@ -1,4 +1,4 @@
-use quiche_moq_wire::{Version, MOQ_VERSION_DRAFT_07, MOQ_VERSION_DRAFT_08, MOQ_VERSION_DRAFT_09, MOQ_VERSION_DRAFT_10, MOQ_VERSION_DRAFT_11, MOQ_VERSION_DRAFT_12, MOQ_VERSION_DRAFT_13, MOQ_VERSION_LITE_01_BY_KIXELATED};
+use quiche_moq_wire::{MOQ_VERSION_DRAFT_16, SUPPORTED_MOQ_VERSIONS, Version};
 
 #[derive(Clone)]
 pub struct Config {
@@ -11,17 +11,8 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            setup_version: MOQ_VERSION_DRAFT_13,
-            supported_versions: vec![
-                MOQ_VERSION_DRAFT_07,
-                MOQ_VERSION_DRAFT_08,
-                MOQ_VERSION_DRAFT_09,
-                MOQ_VERSION_DRAFT_10,
-                MOQ_VERSION_DRAFT_11,
-                MOQ_VERSION_DRAFT_12,
-                MOQ_VERSION_DRAFT_13,
-                MOQ_VERSION_LITE_01_BY_KIXELATED
-            ],
+            setup_version: MOQ_VERSION_DRAFT_16,
+            supported_versions: SUPPORTED_MOQ_VERSIONS.to_vec(),
             ignore_max_request_quota: false,
         }
     }

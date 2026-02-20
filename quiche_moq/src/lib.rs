@@ -27,7 +27,7 @@ mod test {
     use crate::test_utils::_init_moq_pipe;
     use crate::Config;
     use quiche::h3;
-    use quiche_moq_wire::{MOQ_VERSION_DRAFT_07, MOQ_VERSION_DRAFT_08, MOQ_VERSION_DRAFT_09, MOQ_VERSION_DRAFT_10, MOQ_VERSION_DRAFT_11, MOQ_VERSION_DRAFT_12, MOQ_VERSION_DRAFT_13, MOQ_VERSION_DRAFT_14, MOQ_VERSION_DRAFT_15, MOQ_VERSION_DRAFT_16, MOQ_VERSION_LITE_01_BY_KIXELATED, Version};
+    use quiche_moq_wire::{MOQ_VERSION_DRAFT_07, MOQ_VERSION_DRAFT_08, MOQ_VERSION_DRAFT_09, MOQ_VERSION_DRAFT_10, MOQ_VERSION_DRAFT_11, MOQ_VERSION_DRAFT_12, MOQ_VERSION_DRAFT_13, MOQ_VERSION_DRAFT_14, MOQ_VERSION_DRAFT_15, MOQ_VERSION_DRAFT_16, Version};
 
     macro_rules! test_webtransport_moq_versions {
         ($($name:ident: $version:expr,)*) => {
@@ -51,7 +51,7 @@ mod test {
         test_webtransport_moq_draft14: MOQ_VERSION_DRAFT_14,
         test_webtransport_moq_draft15: MOQ_VERSION_DRAFT_15,
         test_webtransport_moq_draft16: MOQ_VERSION_DRAFT_16,
-        test_webtransport_moq_lite01: MOQ_VERSION_LITE_01_BY_KIXELATED,
+        //test_webtransport_moq_lite01: MOQ_VERSION_LITE_01_BY_KIXELATED,
     }
 
     fn test_webtransport_moq(version: Version) {

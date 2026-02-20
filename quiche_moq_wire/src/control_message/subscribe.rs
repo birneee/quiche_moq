@@ -1,6 +1,6 @@
 use crate::bytes::{FromBytes, ToBytes};
 use crate::error::Error;
-use crate::{Namespace, NamespaceTrackname, Parameters, RequestId, TrackAlias, Version, ABSOLUTE_RANGE_FILTER_ID, ABSOLUTE_START_FILTER_ID, LARGEST_OBJECT_FILTER_ID, MAX_FULL_TRACK_NAME_LEN, MAX_TRACK_NAMESPACE_TUPLE_LENGTH, MIN_TRACK_NAMESPACE_TUPLE_LENGTH, MOQ_VERSION_DRAFT_07, MOQ_VERSION_DRAFT_10, MOQ_VERSION_DRAFT_11, MOQ_VERSION_DRAFT_12, MOQ_VERSION_DRAFT_13, NEXT_GROUP_START_FILTER_ID, SUBSCRIBE_MESSAGE_ID};
+use crate::{Namespace, NamespaceTrackname, Parameters, RequestId, TrackAlias, Version, ABSOLUTE_RANGE_FILTER_ID, ABSOLUTE_START_FILTER_ID, LARGEST_OBJECT_FILTER_ID, MAX_FULL_TRACK_NAME_LEN, MAX_TRACK_NAMESPACE_TUPLE_LENGTH, MIN_TRACK_NAMESPACE_TUPLE_LENGTH, MOQ_VERSION_DRAFT_07, MOQ_VERSION_DRAFT_10, MOQ_VERSION_DRAFT_11, MOQ_VERSION_DRAFT_12, MOQ_VERSION_DRAFT_16, NEXT_GROUP_START_FILTER_ID, SUBSCRIBE_MESSAGE_ID};
 use octets::{Octets, OctetsMut};
 use crate::control_message::ControlMessage;
 use crate::location::Location;
@@ -59,7 +59,7 @@ impl ControlMessage for SubscribeMessage {
         b.put_varint(self.request_id)?;
         match version {
             MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_11 => { b.put_varint(self.track_alias.unwrap())?; },
-            MOQ_VERSION_DRAFT_12..=MOQ_VERSION_DRAFT_13 => {},
+            MOQ_VERSION_DRAFT_12..=MOQ_VERSION_DRAFT_16 => {},
             _ => unimplemented!()
         };
         b.put_varint(self.track_namespace().len() as u64)?;
@@ -73,7 +73,7 @@ impl ControlMessage for SubscribeMessage {
         b.put_u8(self.group_order)?;
         match version {
             MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_10 => {},
-            MOQ_VERSION_DRAFT_11..=MOQ_VERSION_DRAFT_13 => { b.put_u8(self.forward.unwrap())?; },
+            MOQ_VERSION_DRAFT_11..=MOQ_VERSION_DRAFT_16 => { b.put_u8(self.forward.unwrap())?; },
             _ => unimplemented!()
         }
         self.filter_type.to_bytes(b, version)?;
@@ -91,7 +91,7 @@ impl ControlMessage for SubscribeMessage {
         let request_id = b.get_varint()?;
         let track_alias = match version {
             MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_11 => Some(b.get_varint()?),
-            MOQ_VERSION_DRAFT_12..=MOQ_VERSION_DRAFT_13 => None,
+            MOQ_VERSION_DRAFT_12..=MOQ_VERSION_DRAFT_16 => None,
             _ => unimplemented!()
         };
         let track_namespace = Tuple::from_bytes(b, version)?.0;
@@ -101,7 +101,7 @@ impl ControlMessage for SubscribeMessage {
         let group_order = b.get_u8()?;
         let forward = match version {
             MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_10 => None,
-            MOQ_VERSION_DRAFT_11..=MOQ_VERSION_DRAFT_13 => Some(b.get_u8()?),
+            MOQ_VERSION_DRAFT_11..=MOQ_VERSION_DRAFT_16 => Some(b.get_u8()?),
             _ => unimplemented!()
         };
         let filter_type = FilterType::from_bytes(b, version)?;

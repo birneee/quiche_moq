@@ -33,6 +33,30 @@ impl Parameter {
     }
 }
 
+impl From<KeyValuePair> for Parameter {
+    fn from(kvp: KeyValuePair) -> Self {
+        Self {
+            ty: kvp.ty,
+            value: match kvp.value {
+                KeyValuePairValue::Varint(v) => ParameterValue::Varint(v),
+                KeyValuePairValue::Bytes(b) => ParameterValue::Bytes(b),
+            },
+        }
+    }
+}
+
+impl From<Parameter> for KeyValuePair {
+    fn from(p: Parameter) -> Self {
+        Self {
+            ty: p.ty,
+            value: match p.value {
+                ParameterValue::Varint(v) => KeyValuePairValue::Varint(v),
+                ParameterValue::Bytes(b) => KeyValuePairValue::Bytes(b),
+            },
+        }
+    }
+}
+
 impl FromBytes<KvpCtx> for Parameter {
     fn from_bytes(b: &mut Octets, ctx: KvpCtx) -> crate::error::Result<Self> {
         Ok(match ctx.version {

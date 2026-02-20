@@ -196,7 +196,7 @@ fn post_handle_recvs(r: &mut Runner) {
             let Some(pending_rid) = s.pending_request_id.take() else { continue };
             if let Some(sub_conn) = conns.get_mut(s.client_id)
                 && let Some(mut moq) = sub_conn.app_data.moq_helper.moq_handle(&mut sub_conn.conn) {
-                    s.track_alias = Some(moq.accept_subscription(pending_rid, sub.largest_location.clone()));
+                    s.track_alias = Some(moq.accept_subscription(pending_rid, sub.largest_location));
                     info!("accept track for {}", s.client_id)
                 }
         }
