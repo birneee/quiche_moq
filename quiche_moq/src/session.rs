@@ -21,10 +21,10 @@ use quiche_moq_wire::control_message::{
 use quiche_moq_wire::object::ObjectHeader;
 use quiche_moq_wire::subgroup::SubgroupHeader;
 use quiche_moq_wire::{
-    DEFAULT_MAX_REQUEST_ID_SETUP_PARAMETER, FromBytes, MOQ_VERSION_DRAFT_07, MOQ_VERSION_DRAFT_11,
-    MOQ_VERSION_DRAFT_12, MOQ_VERSION_DRAFT_13, Namespace, NamespaceTrackname, PROTOCOL_VIOLATION,
-    Parameters, RESET_STREAM_CODE_DELIVERY_TIMEOUT, RequestId, Role, SetupParameters, ToBytes,
-    TrackAlias, Tuple, Version,
+    DEFAULT_MAX_REQUEST_ID_SETUP_PARAMETER, FromBytes, Location, MOQ_VERSION_DRAFT_07,
+    MOQ_VERSION_DRAFT_11, MOQ_VERSION_DRAFT_12, MOQ_VERSION_DRAFT_13, Namespace, NamespaceTrackname,
+    PROTOCOL_VIOLATION, Parameters, RESET_STREAM_CODE_DELIVERY_TIMEOUT, RequestId, Role,
+    SetupParameters, ToBytes, TrackAlias, Tuple, Version,
 };
 use quiche_utils::stream_id::StreamID;
 use quiche_webtransport as wt;
@@ -85,6 +85,11 @@ impl MoqTransportSession {
     /// Control stream is opened and the setup message has been exchanged.
     pub fn initialized(&self) -> bool {
         self.selected_version.is_some()
+    }
+
+    /// Returns the negotiated MoQ version, or `None` if the handshake is not yet complete.
+    pub fn version(&self) -> Option<Version> {
+        self.selected_version
     }
 
     /// connect to server
@@ -646,7 +651,7 @@ impl MoqTransportSession {
             .retain(|id, sub| match f(id, sub) {
                 SubscriptionRequestAction::Keep => true,
                 SubscriptionRequestAction::Accept => {
-                    Self::_accept_subscription(s_msg.as_mut(), sub, quic, wt);
+                    Self::_accept_subscription(s_msg.as_mut(), sub, None, quic, wt);
                     false
                 }
                 SubscriptionRequestAction::Reject(error_code) => {
@@ -661,12 +666,13 @@ impl MoqTransportSession {
     pub fn _accept_subscription(
         s: &mut partial!(MoqTransportSession const control_stream_id config selected_version, mut next_out_track_alias out_tracks, ! *),
         subscribe_message: &SubscribeMessage,
+        largest_location: Option<Location>,
         quic: &mut quiche::Connection,
         wt: &mut wt::Connection,
     ) -> TrackAlias {
         let (out_cm, track_alias) = match *s.selected_version {
             Some(MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_11) => (
-                ControlMessageEnum::SubscribeOk(SubscribeOkMessage::from(subscribe_message, None)),
+                ControlMessageEnum::SubscribeOk(SubscribeOkMessage::from(subscribe_message, None, largest_location)),
                 subscribe_message.track_alias.unwrap(),
             ),
             Some(MOQ_VERSION_DRAFT_12..=MOQ_VERSION_DRAFT_13) => {
@@ -676,6 +682,7 @@ impl MoqTransportSession {
                     ControlMessageEnum::SubscribeOk(SubscribeOkMessage::from(
                         subscribe_message,
                         Some(track_alias),
+                        largest_location,
                     )),
                     track_alias,
                 )
@@ -692,6 +699,7 @@ impl MoqTransportSession {
     pub fn accept_subscription(
         &mut self,
         request_id: RequestId,
+        largest_location: Option<Location>,
         wt: &mut wt::Connection,
         quic: &mut quiche::Connection,
     ) -> TrackAlias {
@@ -699,7 +707,7 @@ impl MoqTransportSession {
             .pending_received_subscriptions
             .remove(&request_id)
             .unwrap();
-        Self::_accept_subscription(self.as_mut(), &cm, quic, wt)
+        Self::_accept_subscription(self.as_mut(), &cm, largest_location, quic, wt)
     }
 
     /// Must be removed from `Self::pending_received_subscriptions` manually

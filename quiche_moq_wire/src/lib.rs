@@ -1,5 +1,5 @@
 mod key_value_pair;
-mod location;
+pub mod location;
 mod reason_phrase;
 mod setup_parameters;
 pub mod object;
@@ -14,6 +14,7 @@ mod error;
 mod octets;
 pub mod control_message;
 mod namespace_trackname;
+mod version;
 
 pub use bytes::FromBytes;
 pub use bytes::ToBytes;
@@ -24,26 +25,42 @@ pub use parameters::Parameters;
 pub use reason_phrase::ReasonPhrase;
 pub use setup_parameters::SetupParameters;
 pub use role::Role;
+pub use location::Location;
 pub use namespace::Namespace;
 pub use tuple::Tuple;
 pub use namespace_trackname::NamespaceTrackname;
+pub use version::Version;
+pub use version::version_to_name;
 
 pub type RequestId = u64;
-pub type Version = u64;
 pub type TrackAlias = u64;
 pub type SubgroupType = u64;
 
-pub const MOQ_VERSION_DRAFT_07: u64 = 0xff000007;
-pub const MOQ_VERSION_DRAFT_08: u64 = 0xff000008;
-pub const MOQ_VERSION_DRAFT_09: u64 = 0xff000009;
-pub const MOQ_VERSION_DRAFT_10: u64 = 0xff00000a;
-pub const MOQ_VERSION_DRAFT_11: u64 = 0xff00000b;
-pub const MOQ_VERSION_DRAFT_12: u64 = 0xff00000c;
-pub const MOQ_VERSION_DRAFT_13: u64 = 0xff00000d;
-pub const MOQ_VERSION_DRAFT_14: u64 = 0xff00000e;
-pub const MOQ_VERSION_DRAFT_15: u64 = 0xff00000f;
-pub const MOQ_VERSION_DRAFT_16: u64 = 0xff000010;
-pub const MOQ_VERSION_LITE_01_BY_KIXELATED: u64 = 0xff0dad01;
+pub const SUPPORTED_MOQ_VERSIONS: &[Version] = &[
+    MOQ_VERSION_DRAFT_07,
+    MOQ_VERSION_DRAFT_08,
+    MOQ_VERSION_DRAFT_09,
+    MOQ_VERSION_DRAFT_10,
+    MOQ_VERSION_DRAFT_11,
+    MOQ_VERSION_DRAFT_12,
+    MOQ_VERSION_DRAFT_13,
+    MOQ_VERSION_DRAFT_14,
+    MOQ_VERSION_DRAFT_15,
+    MOQ_VERSION_DRAFT_16,
+    MOQ_VERSION_LITE_01_BY_KIXELATED,
+];
+
+pub const MOQ_VERSION_DRAFT_07: Version = 0xff000007;
+pub const MOQ_VERSION_DRAFT_08: Version = 0xff000008;
+pub const MOQ_VERSION_DRAFT_09: Version = 0xff000009;
+pub const MOQ_VERSION_DRAFT_10: Version = 0xff00000a;
+pub const MOQ_VERSION_DRAFT_11: Version = 0xff00000b;
+pub const MOQ_VERSION_DRAFT_12: Version = 0xff00000c;
+pub const MOQ_VERSION_DRAFT_13: Version = 0xff00000d;
+pub const MOQ_VERSION_DRAFT_14: Version = 0xff00000e;
+pub const MOQ_VERSION_DRAFT_15: Version = 0xff00000f;
+pub const MOQ_VERSION_DRAFT_16: Version = 0xff000010;
+pub const MOQ_VERSION_LITE_01_BY_KIXELATED: Version = 0xff0dad01;
 
 // Control Message IDs (draft-16)
 // https://www.ietf.org/archive/id/draft-ietf-moq-transport-16.html#name-control-messages
@@ -132,6 +149,13 @@ pub const PUB_SUB_ROLE_ID: u64 = 0x03;
 
 /// https://www.ietf.org/archive/id/draft-ietf-moq-transport-11.html#name-max_request_id
 pub const DEFAULT_MAX_REQUEST_ID_SETUP_PARAMETER: u64 = 0;
+
+/// EXPIRES parameter type ID (draft-16 section 9.2.2.6). Even type → varint value.
+pub const EXPIRES_PARAMETER_ID: u64 = 0x8;
+/// LARGEST_OBJECT parameter type ID (draft-16 section 9.2.2.7). Odd type → length-prefixed Location.
+pub const LARGEST_OBJECT_PARAMETER_ID: u64 = 0x9;
+/// DEFAULT_PUBLISHER_GROUP_ORDER Track Extension type ID (draft-16 section 11.1). Even type → varint value.
+pub const DEFAULT_PUBLISHER_GROUP_ORDER_EXTENSION_ID: u64 = 0x22;
 
 /// https://www.ietf.org/archive/id/draft-ietf-moq-transport-13.html#name-subscribe
 pub const LARGEST_OBJECT_FILTER_ID: u64 = 0x2;

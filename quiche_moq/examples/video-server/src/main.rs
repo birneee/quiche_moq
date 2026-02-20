@@ -202,7 +202,7 @@ fn post_handle_recvs(runner: &mut Runner) {
         while let Some((request_id, sub)) = moq.subscription_inbox_next() {
             assert_eq!(sub.track_namespace().0.0, [b"testsrc"]);
             assert_eq!(sub.track_name(), b"mp4");
-            let track_alias = moq.accept_subscription(*request_id, wt_conn, quic_conn);
+            let track_alias = moq.accept_subscription(*request_id, None, wt_conn, quic_conn);
             conn.app_data
                 .tracks
                 .insert(track_alias, Mp4TrackState::new(track_alias));

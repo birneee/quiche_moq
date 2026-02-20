@@ -1,10 +1,11 @@
 use std::collections::HashMap;
 use quiche::h3;
 use quiche_moq::{MoqTransportSession, PublishStatus, Result, StreamID, SubscriptionRequestAction};
-use quiche_moq::wire::{Namespace, NamespaceTrackname, RequestId, TrackAlias};
+use quiche_moq::wire::{Location, Namespace, NamespaceTrackname, RequestId, TrackAlias};
 use quiche_moq::wire::control_message::{
     PublishNamespaceMessage, RequestErrorMessage, SubscribeMessage, SubscribeOkMessage,
 };
+use quiche_moq::wire::Version;
 use quiche_moq::wire::object::ObjectHeader;
 use quiche_moq::wire::subgroup::SubgroupHeader;
 use quiche_webtransport as wt;
@@ -21,4 +22,8 @@ pub struct MoqHandle<'a> {
 
 impl<'a> MoqHandle<'a> {
     quiche_moq::moq_handle_impl!();
+
+    pub fn quic(&mut self) -> &mut quiche::Connection{
+        self.quic
+    }
 }

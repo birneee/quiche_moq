@@ -1,11 +1,12 @@
 use crate::args::PublishArgs;
 use log::{error, info};
+use partial_borrow::{SplitOff, prelude::*};
 use quiche_mio_runner as runner;
 use quiche_mio_runner::quiche_endpoint::quiche::PROTOCOL_VERSION;
 use quiche_mio_runner::quiche_endpoint::{EndpointConfig, quiche};
 use quiche_mio_runner::{Socket, quiche_endpoint};
 use quiche_moq as moq;
-use quiche_moq::wire::{NamespaceTrackname, TrackAlias, REQUEST_ERROR_DOES_NOT_EXIST};
+use quiche_moq::wire::{Location, NamespaceTrackname, REQUEST_ERROR_DOES_NOT_EXIST, TrackAlias, version_to_name};
 use quiche_moq_webtransport_helper::{MoqHandle, MoqWebTransportHelper};
 use quiche_moq::PublishStatus;
 use std::fs;
@@ -17,13 +18,17 @@ struct AppData {
     args: PublishArgs,
 }
 
+#[derive(PartialBorrow)]
 struct ConnAppData {
     moq_helper: MoqWebTransportHelper,
     namespace_trackname: NamespaceTrackname,
     announced: bool,
+    logged_connect: bool,
     track_aliases: Vec<TrackAlias>,
     input_fd: i32,
     line_buf: Vec<u8>,
+    /// Number of objects consumed from input so far (even before any subscriber joined).
+    next_object_id: u64,
 }
 
 type Endpoint = quiche_endpoint::Endpoint<ConnAppData, AppData>;
@@ -85,9 +90,11 @@ pub(crate) fn run_publish(args: &PublishArgs) {
             ),
             namespace_trackname: args.namespace_trackname.parse().unwrap(),
             announced: false,
+            logged_connect: false,
             track_aliases: Vec::new(),
             input_fd,
             line_buf: Vec::new(),
+            next_object_id: 0,
         },
         None,
         None,
@@ -128,47 +135,46 @@ fn post_handle_recvs(r: &mut Runner) {
         let (Some(conn), appdata) = r.endpoint.conn_with_app_data_mut(icid) else {
             continue;
         };
-        conn.app_data.moq_helper.on_post_handle_recvs(&mut conn.conn);
-        let Some(moq) = conn.app_data.moq_helper.moq_handle(&mut conn.conn) else {
+        let (ad1, ad2) = SplitOff::<partial!(ConnAppData mut moq_helper, ! *)>::split_off_mut(&mut conn.app_data);
+        ad1.moq_helper.on_post_handle_recvs(&mut conn.conn);
+        let Some(mut moq) = ad1.moq_helper.moq_handle(&mut conn.conn) else {
             assert!(!conn.conn.is_timed_out());
             assert!(!conn.conn.is_closed());
             assert!(conn.conn.local_error().is_none());
             assert!(conn.conn.peer_error().is_none());
             continue;
         };
+        // log connection
+        if let Some(version) = moq.version() && !*ad2.logged_connect {
+            let peer_addr = moq.quic().path_stats().next().map(|s| s.peer_addr).unwrap();
+            info!("Server connected {peer_addr:?} v{}", version_to_name(version));
+            *ad2.logged_connect = true;
+        }
         post_handle_recvs_conn(
             moq,
-            &conn.app_data.namespace_trackname,
-            &mut conn.app_data.announced,
-            &mut conn.app_data.track_aliases,
-            conn.app_data.input_fd,
-            &mut conn.app_data.line_buf,
-            &appdata.args,
+            ad2,
+            appdata,
         );
     }
 }
 
 fn post_handle_recvs_conn(
     mut moq: MoqHandle,
-    namespace_trackname: &NamespaceTrackname,
-    announced: &mut bool,
-    track_aliases: &mut Vec<TrackAlias>,
-    input_fd: i32,
-    line_buf: &mut Vec<u8>,
-    args: &PublishArgs,
+    conn_app_data: &mut partial!(ConnAppData mut *, ! moq_helper),
+    app_data: &AppData,
 ) {
     // Handle namespace publishing
-    match moq.publish_namespace_status(namespace_trackname.namespace()) {
+    match moq.publish_namespace_status(conn_app_data.namespace_trackname.namespace()) {
         PublishStatus::Unknown => {
-            moq.publish_namespace(namespace_trackname.namespace().0.0.clone())
+            moq.publish_namespace(conn_app_data.namespace_trackname.namespace().0.0.clone())
                 .unwrap();
-            info!("publishing namespace {}", namespace_trackname.namespace());
+            info!("publishing namespace {}", conn_app_data.namespace_trackname.namespace());
         }
         PublishStatus::Pending => {}
         PublishStatus::Accepted => {
-            if !*announced {
-                info!("announced namespace {} successfully", namespace_trackname.namespace());
-                *announced = true;
+            if !*conn_app_data.announced {
+                info!("announced namespace {} successfully", conn_app_data.namespace_trackname.namespace());
+                *conn_app_data.announced = true;
             }
         }
     }
@@ -179,46 +185,45 @@ fn post_handle_recvs_conn(
             break;
         };
         let request_id = *request_id;
-        if subscription.namespace_trackname != *namespace_trackname {
+        if subscription.namespace_trackname != *conn_app_data.namespace_trackname {
             info!("rejecting subscription to unknown track: {}", subscription.namespace_trackname);
             moq.reject_subscription(request_id, REQUEST_ERROR_DOES_NOT_EXIST);
             continue;
         }
-        info!("accepting subscription to {}", namespace_trackname);
-        let track_alias = moq.accept_subscription(request_id);
-        track_aliases.push(track_alias);
-    }
-
-    if track_aliases.is_empty() {
-        return;
+        info!("accepting subscription to {}", *conn_app_data.namespace_trackname);
+        let largest = (*conn_app_data.next_object_id > 0).then(|| Location { group: 0, object: *conn_app_data.next_object_id - 1 });
+        let track_alias = moq.accept_subscription(request_id, largest);
+        conn_app_data.track_aliases.push(track_alias);
     }
 
     // Read available input data (non-blocking, drain until EAGAIN)
     let mut tmp = [0u8; 4096];
     loop {
         let n = unsafe {
-            libc::read(input_fd, tmp.as_mut_ptr() as *mut libc::c_void, tmp.len())
+            libc::read(*conn_app_data.input_fd, tmp.as_mut_ptr() as *mut libc::c_void, tmp.len())
         };
         if n > 0 {
-            line_buf.extend_from_slice(&tmp[..n as usize]);
+            conn_app_data.line_buf.extend_from_slice(&tmp[..n as usize]);
         } else {
             break;
         }
     }
 
-    let sep_bytes = args.separator.as_bytes();
+    let sep_bytes = app_data.args.separator.as_bytes();
     assert!(!sep_bytes.is_empty());
     // Separate input and send each as an object
-    while !line_buf.is_empty() {
-        let pos = line_buf.windows(sep_bytes.len()).position(|w| w == sep_bytes);
+    while !conn_app_data.line_buf.is_empty() {
+        let pos = conn_app_data.line_buf.windows(sep_bytes.len()).position(|w| w == sep_bytes);
         let Some(pos) = pos else { break; };
-        let mut payload: Vec<u8> = line_buf.drain(..pos + sep_bytes.len()).collect();
+        let mut payload: Vec<u8> = conn_app_data.line_buf.drain(..pos + sep_bytes.len()).collect();
         payload.truncate(pos);
         if payload.is_empty() {
             continue;
         }
-        for &track_alias in track_aliases.iter() {
-            if let Err(e) = moq.send_obj_hdr(payload.len(), track_alias) {
+        let obj_id = *conn_app_data.next_object_id;
+        *conn_app_data.next_object_id += 1;
+        for &track_alias in conn_app_data.track_aliases.iter() {
+            if let Err(e) = moq.send_obj_hdr_with(Some(0), None, Some(obj_id), payload.len(), track_alias) {
                 error!("send obj hdr error: {:?}", e);
                 continue;
             }

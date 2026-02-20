@@ -1,6 +1,24 @@
 use crate::bytes::{FromBytes, ToBytes};
-use crate::Version;
+use crate::{Version, MOQ_VERSION_DRAFT_15};
 use octets::{Octets, OctetsMut};
+
+/// Context for reading/writing Key-Value-Pairs.
+/// In draft-15+ the type field is delta-encoded relative to the previous key in the sequence.
+/// Set `previous_key` to 0 for the first KVP in a sequence.
+#[derive(Clone, Copy)]
+pub(crate) struct KvpCtx {
+    pub(crate) version: Version,
+    pub(crate) previous_key: u64,
+}
+
+impl KvpCtx {
+    pub(crate) fn new(version: Version) -> Self {
+        Self { version, previous_key: 0 }
+    }
+    pub(crate) fn with_previous_key(self, previous_key: u64) -> Self {
+        Self { previous_key, ..self }
+    }
+}
 
 /// https://www.ietf.org/archive/id/draft-ietf-moq-transport-11.html#name-key-value-pair-structure
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -53,26 +71,30 @@ impl TryInto<Vec<u8>> for KeyValuePairValue {
     }
 }
 
-impl FromBytes for KeyValuePair {
-    fn from_bytes(b: &mut Octets, _version: Version) -> crate::error::Result<Self> {
-        let ty = b.get_varint()?;
-        let value = match ty % 2 == 0 {
-            true => KeyValuePairValue::Varint(b.get_varint()?),
-            false => {
-                let value_len = b.get_varint()? as usize;
-                KeyValuePairValue::Bytes(b.get_bytes(value_len)?.to_vec())
-            }
+impl FromBytes<KvpCtx> for KeyValuePair {
+    fn from_bytes(b: &mut Octets, ctx: KvpCtx) -> crate::error::Result<Self> {
+        let ty = if ctx.version >= MOQ_VERSION_DRAFT_15 {
+            ctx.previous_key + b.get_varint()?
+        } else {
+            b.get_varint()?
         };
-        Ok(Self {
-            ty,
-            value,
-        })
+        let value = if ty % 2 == 0 {
+            KeyValuePairValue::Varint(b.get_varint()?)
+        } else {
+            let len = b.get_varint()? as usize;
+            KeyValuePairValue::Bytes(b.get_bytes(len)?.to_vec())
+        };
+        Ok(Self { ty, value })
     }
 }
 
-impl ToBytes for KeyValuePair {
-    fn to_bytes(&self, b: &mut OctetsMut, _version: Version) -> crate::error::Result<()> {
-        b.put_varint(self.ty)?;
+impl ToBytes<KvpCtx> for KeyValuePair {
+    fn to_bytes(&self, b: &mut OctetsMut, ctx: KvpCtx) -> crate::error::Result<()> {
+        if ctx.version >= MOQ_VERSION_DRAFT_15 {
+            b.put_varint(self.ty - ctx.previous_key)?;
+        } else {
+            b.put_varint(self.ty)?;
+        }
         match &self.value {
             KeyValuePairValue::Varint(v) => { b.put_varint(*v)?; }
             KeyValuePairValue::Bytes(v) => {

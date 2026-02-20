@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 use crate::bytes::{FromBytes, ToBytes};
 use crate::error::Error::ProtocolViolation;
-use crate::{control_message, Version, MOQ_VERSION_DRAFT_07, MOQ_VERSION_DRAFT_10, MOQ_VERSION_DRAFT_11, MOQ_VERSION_DRAFT_13};
+use crate::{control_message, Version, MOQ_VERSION_DRAFT_07, MOQ_VERSION_DRAFT_10, MOQ_VERSION_DRAFT_11, MOQ_VERSION_DRAFT_16};
 use octets::{Octets, OctetsMut};
 pub use publish_namespace::PublishNamespaceMessage;
 pub use request_ok::RequestOkMessage;
@@ -97,7 +97,7 @@ impl ControlMessageEnum {
         let _type = b.get_varint();
         let encoded_len = match version {
             MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_10 => b.get_varint().unwrap() as usize,
-            MOQ_VERSION_DRAFT_11..=MOQ_VERSION_DRAFT_13 => b.get_u16().unwrap() as usize,
+            MOQ_VERSION_DRAFT_11..=MOQ_VERSION_DRAFT_16 => b.get_u16().unwrap() as usize,
             _ => unimplemented!(),
         };
         let header_len = b.off();
@@ -123,7 +123,7 @@ pub(crate) fn set_control_message_length(b: &mut OctetsMut, len_off: usize, vers
         MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_10 => {
             put_varint_with_len_at(b, len as u64, 2, len_off)?;
         }
-        MOQ_VERSION_DRAFT_11..=MOQ_VERSION_DRAFT_13 => {
+        MOQ_VERSION_DRAFT_11..=MOQ_VERSION_DRAFT_16 => {
             put_u16_at(b, len as u16, len_off)?;
         }
         _ => unimplemented!()
@@ -200,13 +200,39 @@ mod tests {
             end_group: None,
             parameters: Parameters(vec![]),
         };
-        let som = SubscribeOkMessage::from(&sm, None);
+        let som = SubscribeOkMessage::from(&sm, None, None);
         let mut b = [0u8; 100];
         let mut o = OctetsMut::with_slice(&mut b);
         som.to_bytes(&mut o, MOQ_VERSION_DRAFT_07).unwrap();
         let len = o.off();
         let mut o = Octets::with_slice(&b[..len]);
         let som2 = SubscribeOkMessage::from_bytes(&mut o, MOQ_VERSION_DRAFT_07).unwrap();
+        assert_eq!(som, som2);
+    }
+
+    #[test]
+    fn recode_subscribe_ok_draft16() {
+        use crate::{MOQ_VERSION_DRAFT_16, location::Location};
+        let sm = SubscribeMessage {
+            request_id: 3,
+            track_alias: None, // draft-16: no track_alias in SUBSCRIBE
+            namespace_trackname: "namespace--track".parse().unwrap(),
+            subscriber_priority: 0,
+            group_order: 0,
+            forward: None,
+            filter_type: FilterType::LargestObject,
+            start_location: None,
+            end_group: None,
+            parameters: Parameters(vec![]),
+        };
+        let largest = Some(Location { group: 1, object: 42 });
+        let som = SubscribeOkMessage::from(&sm, Some(99), largest);
+        let mut b = [0u8; 100];
+        let mut o = OctetsMut::with_slice(&mut b);
+        som.to_bytes(&mut o, MOQ_VERSION_DRAFT_16).unwrap();
+        let len = o.off();
+        let mut o = Octets::with_slice(&b[..len]);
+        let som2 = SubscribeOkMessage::from_bytes(&mut o, MOQ_VERSION_DRAFT_16).unwrap();
         assert_eq!(som, som2);
     }
 }

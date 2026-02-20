@@ -2,7 +2,7 @@ use crate::bytes::{FromBytes, ToBytes};
 use crate::error::Result;
 use crate::{SubgroupType, Version, STREAM_HEADER_SUBGROUP_STREAM_TYPE_ID};
 use octets::{Octets, OctetsMut};
-use crate::key_value_pair::KeyValuePair;
+use crate::key_value_pair::{KeyValuePair, KvpCtx};
 use crate::subgroup::SubgroupHeader;
 
 #[derive(Debug, Clone)]
@@ -39,8 +39,11 @@ impl ObjectHeader {
             0xD => {
                 let ext_hdr_len = b.get_varint()? as usize;
                 let ext_hdr_end = b.off() + ext_hdr_len;
+                let mut prev_key = 0u64;
                 while b.off() < ext_hdr_end {
-                    extension_headers.push(KeyValuePair::from_bytes(b, version)?);
+                    let kvp = KeyValuePair::from_bytes(b, KvpCtx::new(version).with_previous_key(prev_key))?;
+                    prev_key = kvp.ty;
+                    extension_headers.push(kvp);
                 }
                 assert_eq!(b.off(), ext_hdr_end);
             }
@@ -87,8 +90,10 @@ impl ToBytes for ObjectHeader {
             0xD => {
                 //todo maybe use SubgroupHeader::extensions_present
                 b.put_varint(self.extension_headers.len() as u64)?;
+                let mut prev_key = 0u64;
                 for header in &self.extension_headers {
-                    header.to_bytes(b, version)?;
+                    header.to_bytes(b, KvpCtx::new(version).with_previous_key(prev_key))?;
+                    prev_key = header.ty;
                 }
             }
             _ => unimplemented!(),

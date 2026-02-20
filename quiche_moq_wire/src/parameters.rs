@@ -1,9 +1,24 @@
 use crate::bytes::{FromBytes, ToBytes};
+use crate::key_value_pair::KvpCtx;
+use crate::parameter::ParameterValue;
 use crate::{Parameter, Version};
 use octets::{Octets, OctetsMut};
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct Parameters(pub Vec<Parameter>);
+
+impl PartialEq for Parameters {
+    /// Parameters are conceptually a map keyed by type ID, so ordering is irrelevant.
+    fn eq(&self, other: &Self) -> bool {
+        if self.0.len() != other.0.len() { return false; }
+        let mut a = self.0.clone();
+        let mut b = other.0.clone();
+        a.sort_by_key(|p| p.ty);
+        b.sort_by_key(|p| p.ty);
+        a == b
+    }
+}
+impl Eq for Parameters {}
 
 impl Parameters {
     pub fn len(&self) -> usize {
@@ -12,26 +27,49 @@ impl Parameters {
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
+
+    /// Get the varint value for the given even type ID.
+    pub fn get_varint(&self, ty: u64) -> Option<u64> {
+        debug_assert!(ty.is_multiple_of(2), "varint parameters have even type IDs");
+        self.0.iter().find(|p| p.ty == ty).and_then(|p| {
+            if let ParameterValue::Varint(v) = p.value { Some(v) } else { None }
+        })
+    }
+
+    /// Get the byte-string value for the given odd type ID.
+    pub fn get_bytes(&self, ty: u64) -> Option<&[u8]> {
+        debug_assert!(ty % 2 == 1, "byte-string parameters have odd type IDs");
+        self.0.iter().find(|p| p.ty == ty).and_then(|p| {
+            if let ParameterValue::Bytes(ref v) = p.value { Some(v.as_slice()) } else { None }
+        })
+    }
 }
 
 impl FromBytes for Parameters {
-    /// including the length varint
+    /// Reads a count-prefixed sequence of parameters. In draft-15+ each parameter's type is
+    /// delta-encoded relative to the previous one; `KvpCtx` handles this transparently.
     fn from_bytes(b: &mut Octets, version: Version) -> crate::error::Result<Self> {
+        let count = b.get_varint()?;
         let mut params = vec![];
-        let number_of_parameters = b.get_varint()?;
-        for _ in 0..number_of_parameters {
-            params.push(Parameter::from_bytes(b, version)?);
+        let mut prev_key = 0u64;
+        for _ in 0..count {
+            let p = Parameter::from_bytes(b, KvpCtx::new(version).with_previous_key(prev_key))?;
+            prev_key = p.ty;
+            params.push(p);
         }
         Ok(Self(params))
     }
 }
 
 impl ToBytes for Parameters {
-    /// including the length varint
+    /// Writes a count-prefixed sequence of parameters. In draft-15+ each parameter's type is
+    /// delta-encoded relative to the previous one; `KvpCtx` handles this transparently.
     fn to_bytes(&self, b: &mut OctetsMut, version: Version) -> crate::error::Result<()> {
         b.put_varint(self.0.len() as u64)?;
+        let mut prev_key = 0u64;
         for p in &self.0 {
-            p.to_bytes(b, version)?;
+            p.to_bytes(b, KvpCtx::new(version).with_previous_key(prev_key))?;
+            prev_key = p.ty;
         }
         Ok(())
     }

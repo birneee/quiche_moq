@@ -6,7 +6,7 @@ use quiche_mio_runner::Socket;
 use quiche_mio_runner::quiche_endpoint::{Endpoint, EndpointConfig, ServerConfig, quiche, ClientId};
 use quiche_moq as moq;
 use quiche_moq::{SubscriptionRequestAction};
-use quiche_moq::wire::{Namespace, NamespaceTrackname, RequestId, TrackAlias, REQUEST_ERROR_DOES_NOT_EXIST};
+use quiche_moq::wire::{Location, Namespace, NamespaceTrackname, REQUEST_ERROR_DOES_NOT_EXIST, RequestId, TrackAlias, version_to_name};
 use quiche_moq_webtransport_helper::{MoqHandle, MoqWebTransportHelper};
 use quiche_utils::cert::load_or_generate_keys;
 
@@ -15,6 +15,7 @@ type Runner = runner::Runner<ConnAppData, AppData, ()>;
 struct ConnAppData {
     moq_helper: MoqWebTransportHelper,
     announced_namespaces: HashSet<Namespace>,
+    logged_connect: bool,
 }
 
 struct SubscriberInfo {
@@ -43,6 +44,8 @@ struct Subscription {
     obj_group_id: u64,
     /// Object ID of the current object (from publisher's object header).
     obj_object_id: u64,
+    /// Largest location from publisher's SUBSCRIBE_OK, forwarded to subscribers.
+    largest_location: Option<Location>,
 }
 
 impl Subscription {
@@ -84,6 +87,7 @@ fn main() {
                 let mut c = ServerConfig::new(|_| ConnAppData {
                     moq_helper: MoqWebTransportHelper::new_server(moq::Config::default()),
                     announced_namespaces: HashSet::new(),
+                    logged_connect: false,
                 });
                 c.client_config = {
                     let mut c =
@@ -117,7 +121,12 @@ fn post_handle_recvs(r: &mut Runner) {
     for (icid, conn) in conns.iter_mut() {
         conn.app_data.moq_helper.on_post_handle_recvs(&mut conn.conn);
         let Some(moq) = conn.app_data.moq_helper.moq_handle(&mut conn.conn) else { continue };
-        post_handle_recvs_conn(icid, moq, appdata);
+        post_handle_recvs_conn(
+            icid, 
+            moq, 
+            appdata,
+            &mut conn.app_data.logged_connect,
+        );
     }
 
     // Phase 2: Announce known namespaces to all connected Moq clients
@@ -166,8 +175,9 @@ fn post_handle_recvs(r: &mut Runner) {
         let Some(mut moq) = conn.app_data.moq_helper.moq_handle(&mut conn.conn) else { return true };
         let Some(response) = moq.poll_subscribe_response(relay_request_id) else { return true };
         match response {
-            Ok((track_alias, _)) => {
+            Ok((track_alias, ok_msg)) => {
                 sub.publisher_track_alias = Some(track_alias);
+                sub.largest_location = ok_msg.largest_location();
                 info!("accepted track {} by {}", nt, sub.publisher_id);
                 true
             }
@@ -186,7 +196,7 @@ fn post_handle_recvs(r: &mut Runner) {
             let Some(pending_rid) = s.pending_request_id.take() else { continue };
             if let Some(sub_conn) = conns.get_mut(s.client_id)
                 && let Some(mut moq) = sub_conn.app_data.moq_helper.moq_handle(&mut sub_conn.conn) {
-                    s.track_alias = Some(moq.accept_subscription(pending_rid));
+                    s.track_alias = Some(moq.accept_subscription(pending_rid, sub.largest_location.clone()));
                     info!("accept track for {}", s.client_id)
                 }
         }
@@ -265,7 +275,15 @@ fn post_handle_recvs_conn(
     cid: ClientId,
     mut moq: MoqHandle<'_>,
     app_data: &mut AppData,
+    logged_connect: &mut bool,
 ) {
+    // log connection
+    if let Some(version) = moq.version() && !*logged_connect {
+        let peer_addr = moq.quic().path_stats().next().map(|s| s.peer_addr).unwrap();
+        info!("Client {cid} connected {peer_addr:?} v{}", version_to_name(version));
+        *logged_connect = true;
+    }
+
     moq.process_subscription_requests(|request_id, cm| {
         let nt = &cm.namespace_trackname;
         // Skip subscriptions already queued from a previous frame.
@@ -289,6 +307,7 @@ fn post_handle_recvs_conn(
                     obj_buf: Vec::new(),
                     obj_group_id: 0,
                     obj_object_id: 0,
+                    largest_location: None,
                 }
             });
             if !sub.is_publisher_accepted() {

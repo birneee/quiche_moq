@@ -958,6 +958,7 @@ dependencies = [
  "libc",
  "log",
  "mio",
+ "partial-borrow",
  "quiche_h3_utils",
  "quiche_mio_runner",
  "quiche_moq",

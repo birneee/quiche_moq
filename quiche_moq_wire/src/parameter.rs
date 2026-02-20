@@ -1,7 +1,7 @@
 use crate::bytes::{FromBytes, ToBytes};
-use crate::{Version, MOQ_VERSION_DRAFT_07, MOQ_VERSION_DRAFT_10, MOQ_VERSION_DRAFT_11, MOQ_VERSION_DRAFT_13};
+use crate::{MOQ_VERSION_DRAFT_07, MOQ_VERSION_DRAFT_10, MOQ_VERSION_DRAFT_11, MOQ_VERSION_DRAFT_16};
 use octets::{Octets, OctetsMut};
-use crate::key_value_pair::{KeyValuePair, KeyValuePairValue};
+use crate::key_value_pair::{KeyValuePair, KeyValuePairValue, KvpCtx};
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Parameter{
@@ -33,9 +33,9 @@ impl Parameter {
     }
 }
 
-impl FromBytes for Parameter {
-    fn from_bytes(b: &mut Octets, version: Version) -> crate::error::Result<Self> {
-        Ok(match version {
+impl FromBytes<KvpCtx> for Parameter {
+    fn from_bytes(b: &mut Octets, ctx: KvpCtx) -> crate::error::Result<Self> {
+        Ok(match ctx.version {
             MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_10 => {
                 let ty = b.get_varint()?;
                 let len = b.get_varint()?;
@@ -45,9 +45,9 @@ impl FromBytes for Parameter {
                     value: ParameterValue::Bytes(value.to_vec()),
                 }
             }
-            MOQ_VERSION_DRAFT_11..=MOQ_VERSION_DRAFT_13 => {
-                let kvp = KeyValuePair::from_bytes(b, version)?;
-                Self{
+            MOQ_VERSION_DRAFT_11..=MOQ_VERSION_DRAFT_16 => {
+                let kvp = KeyValuePair::from_bytes(b, ctx)?;
+                Self {
                     ty: kvp.ty,
                     value: match kvp.value {
                         KeyValuePairValue::Bytes(v) => ParameterValue::Bytes(v),
@@ -60,9 +60,9 @@ impl FromBytes for Parameter {
     }
 }
 
-impl ToBytes for Parameter {
-    fn to_bytes(&self, b: &mut OctetsMut, version: Version) -> crate::error::Result<()> {
-        match version {
+impl ToBytes<KvpCtx> for Parameter {
+    fn to_bytes(&self, b: &mut OctetsMut, ctx: KvpCtx) -> crate::error::Result<()> {
+        match ctx.version {
             MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_10 => {
                 b.put_varint(self.ty)?;
                 match &self.value {
@@ -76,7 +76,7 @@ impl ToBytes for Parameter {
                     }
                 }
             }
-            MOQ_VERSION_DRAFT_11..=MOQ_VERSION_DRAFT_13 => {
+            MOQ_VERSION_DRAFT_11..=MOQ_VERSION_DRAFT_16 => {
                 let kvp = KeyValuePair {
                     ty: self.ty,
                     value: match &self.value {
@@ -84,7 +84,7 @@ impl ToBytes for Parameter {
                         ParameterValue::Varint(v) => KeyValuePairValue::Varint(*v),
                     },
                 };
-                kvp.to_bytes(b, version)?;
+                kvp.to_bytes(b, ctx)?;
             }
             _ => unimplemented!()
         }

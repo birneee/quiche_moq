@@ -2,7 +2,7 @@ use crate::bytes::{FromBytes, ToBytes};
 use crate::Version;
 use octets::{Octets, OctetsMut};
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Location {
     pub group: u64,
     pub object: u64,

@@ -143,7 +143,7 @@ fn handshake() {
                                 unreachable!()
                             }
                             info!("accept track {}", subscription.namespace_trackname);
-                            let track_alias = moq.accept_subscription(*request_id);
+                            let track_alias = moq.accept_subscription(*request_id, None);
                             let buf = b"hello";
                             moq.send_obj(buf, track_alias).unwrap();
                             info!("send obj: {}", str::from_utf8(buf).unwrap())

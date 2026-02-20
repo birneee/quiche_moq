@@ -109,7 +109,7 @@ fn post_handle_recvs(runner: &mut Runner) {
         };
 
         while let Some((request_id, _subscription)) = moq_session.subscription_inbox_next() {
-            moq_session.accept_subscription(*request_id, wt_conn, quic_conn);
+            moq_session.accept_subscription(*request_id, None, wt_conn, quic_conn);
         }
         if let Some(date_time_str) = &date_time_str {
             // if track is not writable skip the time object

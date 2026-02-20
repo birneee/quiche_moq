@@ -1,5 +1,5 @@
 use crate::bytes::{FromBytes, ToBytes};
-use crate::{Version, MOQ_VERSION_DRAFT_07, MOQ_VERSION_DRAFT_10, MOQ_VERSION_DRAFT_11, MOQ_VERSION_DRAFT_13};
+use crate::{Version, MOQ_VERSION_DRAFT_07, MOQ_VERSION_DRAFT_10, MOQ_VERSION_DRAFT_11, MOQ_VERSION_DRAFT_16};
 use octets::{Octets, OctetsMut};
 
 pub(crate) struct ControlMessageHeader {
@@ -20,7 +20,7 @@ impl FromBytes for ControlMessageHeader {
             MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_10 => {
                 b.get_varint()? as usize
             }
-            MOQ_VERSION_DRAFT_11..=MOQ_VERSION_DRAFT_13 => {
+            MOQ_VERSION_DRAFT_11..=MOQ_VERSION_DRAFT_16 => {
                 b.get_u16()? as usize
             }
             _ => unimplemented!()
@@ -39,7 +39,7 @@ impl ToBytes for ControlMessageHeader {
             MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_10 => {
                 b.put_varint(self.len as u64)?;
             }
-            MOQ_VERSION_DRAFT_11..=MOQ_VERSION_DRAFT_13 => {
+            MOQ_VERSION_DRAFT_11..=MOQ_VERSION_DRAFT_16 => {
                 b.put_u16(self.len as u16)?;
             }
             _ => unimplemented!()
