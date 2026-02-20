@@ -14,29 +14,40 @@ enum State {
     ObjectPayload { subgroup_ty: SubgroupType, remaining_bytes: usize },
 }
 
+/// Manages one subgroup stream
 pub(crate) struct OutStream {
     stream_id: StreamID,
     state: State,
     track_alias: TrackAlias,
+    group_id: u64,
+    subgroup_id: u64,
     version: Version,
+    next_object_id: u64,
 }
 
 impl OutStream {
     pub fn new(
         stream_id: StreamID,
         track_alias: TrackAlias,
+        group_id: u64,
+        subgroup_id: u64,
         version: Version,
     ) -> Self {
         Self {
             stream_id,
             state: State::SubgroupHeader,
             track_alias,
+            group_id,
+            subgroup_id,
             version,
+            next_object_id: 0,
         }
     }
 
+    /// `object_id`: `None` to auto-increment; `Some(id)` to use explicit id (must be >= next expected).
     pub fn send_obj_hdr(
         &mut self,
+        object_id: Option<u64>,
         size: usize,
         quic: &mut quiche::Connection,
         wt: &mut wt::Connection,
@@ -45,7 +56,7 @@ impl OutStream {
         loop {
             match self.state {
                 State::SubgroupHeader => {
-                    let subgroup = SubgroupHeader::new(self.track_alias, 0, 0, self.version);
+                    let subgroup = SubgroupHeader::new(self.track_alias, self.group_id, self.subgroup_id, self.version);
                     let mut b = [0u8; 100];
                     let mut o = OctetsMut::with_slice(&mut b);
                     subgroup.to_bytes(&mut o, self.version)?;
@@ -74,7 +85,19 @@ impl OutStream {
                     continue;
                 }
                 State::ObjectHeader { subgroup_ty } => {
-                    let object_header = ObjectHeader::new(0, size, subgroup_ty);
+                    let object_id = match object_id {
+                        None => {
+                            let id = self.next_object_id;
+                            self.next_object_id += 1;
+                            id
+                        }
+                        Some(id) => {
+                            assert!(id >= self.next_object_id, "object_id {id} < next expected {}", self.next_object_id);
+                            self.next_object_id = id + 1;
+                            id
+                        }
+                    };
+                    let object_header = ObjectHeader::new(object_id, size, subgroup_ty);
                     let mut b = [0u8; 100];
                     let mut o = OctetsMut::with_slice(&mut b);
                     object_header.to_bytes(&mut o, self.version)?;
@@ -142,6 +165,24 @@ impl OutStream {
         }
     }
 
+    pub fn group_id(&self) -> u64 {
+        self.group_id
+    }
+
+    pub fn subgroup_id(&self) -> u64 {
+        self.subgroup_id
+    }
+
+    /// Send a QUIC FIN to close this subgroup stream.
+    /// Must only be called between objects (not while an object payload is in progress).
+    pub fn fin(&mut self, wt: &mut wt::Connection, quic: &mut quiche::Connection) {
+        assert!(
+            !matches!(self.state, State::ObjectPayload { .. }),
+            "cannot fin stream while object payload is in progress"
+        );
+        wt.stream_send(self.stream_id.into(), quic, &[], true).ok();
+    }
+
     /// do not send partially
     pub fn send_obj(
         &mut self,
@@ -149,7 +190,7 @@ impl OutStream {
         wt: &mut wt::Connection,
         buf: &[u8],
     ) -> Result<()> {
-        self.send_obj_hdr(buf.len(), quic, wt)?;
+        self.send_obj_hdr(None, buf.len(), quic, wt)?;
         let n = self.send_obj_pld(buf, wt, quic).unwrap();
         assert_eq!(n, buf.len());
         Ok(())

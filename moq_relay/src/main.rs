@@ -39,6 +39,10 @@ struct Subscription {
     obj_forwarded: usize,
     /// Scratch buffer for reading payload from publisher.
     obj_buf: Vec<u8>,
+    /// Group ID of the current object (from publisher's subgroup header).
+    obj_group_id: u64,
+    /// Object ID of the current object (from publisher's object header).
+    obj_object_id: u64,
 }
 
 impl Subscription {
@@ -204,6 +208,10 @@ fn post_handle_recvs(r: &mut Runner) {
                             Ok(hdr) => {
                                 sub.obj_payload_len = hdr.payload_len();
                                 sub.obj_forwarded = 0;
+                                sub.obj_object_id = hdr.id();
+                                if let Some(sg) = moq.subgroup_header(pub_ta) {
+                                    sub.obj_group_id = sg.group_id();
+                                }
                                 FwdStep::Hdr(sub.obj_payload_len)
                             }
                             Err(moq::Error::Done) => FwdStep::Stop,
@@ -229,7 +237,7 @@ fn post_handle_recvs(r: &mut Runner) {
                         let Some(sub_ta) = s.track_alias else { continue };
                         if let Some(sub_conn) = conns.get_mut(s.client_id)
                             && let Some(mut moq) = sub_conn.app_data.moq_helper.moq_handle(&mut sub_conn.conn)
-                                && let Err(e) = moq.send_obj_hdr(len, sub_ta) {
+                                && let Err(e) = moq.send_obj_hdr_with(Some(sub.obj_group_id), None, Some(sub.obj_object_id), len, sub_ta) {
                                     error!("send obj hdr to subscriber {} for {}: {:?}", s.client_id, nt, e);
                                 }
                     }
@@ -279,6 +287,8 @@ fn post_handle_recvs_conn(
                     obj_payload_len: 0,
                     obj_forwarded: 0,
                     obj_buf: Vec::new(),
+                    obj_group_id: 0,
+                    obj_object_id: 0,
                 }
             });
             if !sub.is_publisher_accepted() {

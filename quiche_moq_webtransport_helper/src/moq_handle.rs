@@ -32,9 +32,22 @@ impl<'a> MoqHandle<'a> {
         self.session.send_obj(buf, track_alias, self.wt, self.h3, self.quic)
     }
 
-    /// Send just the object header (for streaming large objects)
+    /// Send just the object header (for streaming large objects).
+    /// Auto-increments object ID within the current group.
     pub fn send_obj_hdr(&mut self, size: usize, track_alias: TrackAlias) -> moq::Result<()> {
         self.session.send_obj_hdr(size, track_alias, self.wt, self.h3, self.quic)
+    }
+
+    /// Send just the object header with explicit group/subgroup/object IDs.
+    /// See `Session::send_obj_hdr_with` for semantics of each parameter.
+    pub fn send_obj_hdr_with(&mut self, group_id: Option<u64>, subgroup_id: Option<u64>, object_id: Option<u64>, size: usize, track_alias: TrackAlias) -> moq::Result<()> {
+        self.session.send_obj_hdr_with(group_id, subgroup_id, object_id, size, track_alias, self.wt, self.h3, self.quic)
+    }
+
+    /// Returns the subgroup header of the current incoming stream for `track_alias`.
+    /// Valid after a successful `read_obj_hdr` call.
+    pub fn subgroup_header(&self, track_alias: TrackAlias) -> Option<&moq::wire::subgroup::SubgroupHeader> {
+        self.session.subgroup_header(track_alias)
     }
 
     /// Send object payload (after sending header)

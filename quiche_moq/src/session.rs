@@ -19,6 +19,7 @@ use quiche_moq_wire::control_message::{
     RequestErrorMessage, ServerSetupMessage, SubscribeOkMessage,
 };
 use quiche_moq_wire::object::ObjectHeader;
+use quiche_moq_wire::subgroup::SubgroupHeader;
 use quiche_moq_wire::{
     DEFAULT_MAX_REQUEST_ID_SETUP_PARAMETER, FromBytes, MOQ_VERSION_DRAFT_07, MOQ_VERSION_DRAFT_11,
     MOQ_VERSION_DRAFT_12, MOQ_VERSION_DRAFT_13, Namespace, NamespaceTrackname, PROTOCOL_VIOLATION,
@@ -522,7 +523,7 @@ impl MoqTransportSession {
                 track.current_stream_id = Some(stream_id);
                 self.out_streams.insert(
                     stream_id,
-                    OutStream::new(stream_id, track_alias, self.selected_version.unwrap()),
+                    OutStream::new(stream_id, track_alias, 0, 0, self.selected_version.unwrap()),
                 );
                 stream_id
             }
@@ -531,6 +532,7 @@ impl MoqTransportSession {
         stream.send_obj(quic, wt, buf)
     }
 
+    /// Send object header. Auto-increments object ID within the current group.
     pub fn send_obj_hdr(
         &mut self,
         size: usize,
@@ -539,24 +541,60 @@ impl MoqTransportSession {
         h3: &mut h3::Connection,
         quic: &mut quiche::Connection,
     ) -> Result<()> {
-        let track = self.out_tracks.get_mut(&track_alias).unwrap();
-        let stream_id = match track.current_stream_id {
-            Some(v) => v,
-            None => {
-                let stream_id = wt
-                    .open_stream(self.webtransport_session_id.into(), h3, quic, false)
-                    .unwrap()
-                    .into();
-                track.current_stream_id = Some(stream_id);
-                self.out_streams.insert(
-                    stream_id,
-                    OutStream::new(stream_id, track_alias, self.selected_version.unwrap()),
-                );
-                stream_id
-            }
+        self.send_obj_hdr_with(None, None, None, size, track_alias, wt, h3, quic)
+    }
+
+    /// `group_id`: `None` = same group as previous; `Some(id)` = explicit (must be non-decreasing;
+    ///   a higher value opens a new subgroup stream per the spec).
+    /// `subgroup_id`: `None` = same subgroup as previous; `Some(id)` = explicit
+    ///   (a different value within the same group also opens a new stream per the spec).
+    /// `object_id`: `None` = auto-increment; `Some(id)` = explicit (must be >= next expected in this subgroup).
+    #[allow(clippy::too_many_arguments)]
+    pub fn send_obj_hdr_with(
+        &mut self,
+        group_id: Option<u64>,
+        subgroup_id: Option<u64>,
+        object_id: Option<u64>,
+        size: usize,
+        track_alias: TrackAlias,
+        wt: &mut wt::Connection,
+        h3: &mut h3::Connection,
+        quic: &mut quiche::Connection,
+    ) -> Result<()> {
+        let version = self.selected_version.unwrap();
+
+        // Determine whether a new subgroup stream is needed.
+        let need_new_stream = if let Some(sid) = self.out_tracks[&track_alias].current_stream_id {
+            let stream = &self.out_streams[&sid];
+            let new_group = group_id.unwrap_or(stream.group_id());
+            assert!(new_group >= stream.group_id(), "group_id must be non-decreasing");
+            let new_subgroup = subgroup_id.unwrap_or(stream.subgroup_id());
+            new_group > stream.group_id() || new_subgroup != stream.subgroup_id()
+        } else {
+            true
         };
-        let stream = self.out_streams.get_mut(&stream_id).unwrap();
-        stream.send_obj_hdr(size, quic, wt)
+
+        if need_new_stream {
+            // FIN the old stream before switching to a new subgroup.
+            if let Some(old_sid) = self.out_tracks[&track_alias].current_stream_id {
+                self.out_streams.get_mut(&old_sid).unwrap().fin(wt, quic);
+                self.out_tracks.get_mut(&track_alias).unwrap().current_stream_id = None;
+            }
+            let eff_group = group_id.unwrap_or(0);
+            let eff_subgroup = subgroup_id.unwrap_or(0);
+            let stream_id = wt
+                .open_stream(self.webtransport_session_id.into(), h3, quic, false)
+                .unwrap()
+                .into();
+            self.out_tracks.get_mut(&track_alias).unwrap().current_stream_id = Some(stream_id);
+            self.out_streams.insert(
+                stream_id,
+                OutStream::new(stream_id, track_alias, eff_group, eff_subgroup, version),
+            );
+        }
+
+        let stream_id = self.out_tracks[&track_alias].current_stream_id.unwrap();
+        self.out_streams.get_mut(&stream_id).unwrap().send_obj_hdr(object_id, size, quic, wt)
     }
 
     pub fn send_obj_pld(
@@ -734,6 +772,14 @@ impl MoqTransportSession {
 
     pub fn readable_streams(&self, track_alias: TrackAlias) -> &[StreamID] {
         self.in_tracks.get(&track_alias).unwrap().readable_streams()
+    }
+
+    /// Returns the subgroup header of the current incoming stream for `track_alias`.
+    /// Valid after a successful `read_obj_hdr` call.
+    pub fn subgroup_header(&self, track_alias: TrackAlias) -> Option<&SubgroupHeader> {
+        let track = self.in_tracks.get(&track_alias)?;
+        let stream_id = track.current_stream()?;
+        self.in_streams.get(&stream_id)?.subgroup_header()
     }
 
     pub fn read_obj_hdr(
