@@ -1,25 +1,25 @@
 # MoQ Utils
 
+publish seconds
+
 ```shell
-while true; do date --rfc-3339=ns; sleep 1; done | \
+$ while true; do date --rfc-3339=ns; sleep 1; done | \
 moq-utils pub -t time--seconds https://127.0.0.1:8080
+[2026-02-20T11:06:27Z INFO  moq_utils::publish] connect to 127.0.0.1:8080
+[2026-02-20T11:06:27Z INFO  moq_utils::publish] publishing namespace time
+[2026-02-20T11:06:27Z INFO  moq_utils::publish] announced namespace time successfully
+[2026-02-20T11:06:29Z INFO  moq_utils::publish] accepting subscription to time--seconds
 ```
 
-```shell
-moq-utils sub -t time--seconds -s $'\n' https://127.0.0.1:8080
-```
-
-subscribe to time-server
+subscribe seconds
 
 ```shell
-$ RUST_LOG=info moq-utils sub --namespace clock --trackname second --setup-version draft13 --output - --separator $'\n'  https://127.0.0.1:8080/moq
-[2025-11-07T21:08:39Z INFO  moq_utils::subscribe] connect to 127.0.0.1:8080
-[2025-11-07T21:08:39Z INFO  moq_utils::subscribe] subscribed to: clock second
-2025-11-07T22:08:40.205169467+01:00
-2025-11-07T22:08:41.206708773+01:00
-2025-11-07T22:08:42.208809883+01:00
-2025-11-07T22:08:43.210662802+01:00
-2025-11-07T22:08:44.212387335+01:00
-2025-11-07T22:08:45.214460190+01:00
-2025-11-07T22:08:46.216391891+01:00
+$ moq-utils sub -t time--seconds -s '\n' https://127.0.0.1:8080
+[2026-02-20T11:06:29Z INFO  moq_utils::subscribe] connect to 127.0.0.1:8080
+[2026-02-20T11:06:29Z INFO  moq_utils::subscribe] namespace announced: time
+[2026-02-20T11:06:29Z INFO  moq_utils::subscribe] request subscribe: time--seconds
+[2026-02-20T11:06:29Z INFO  moq_utils::subscribe] subscribe accepted: time--seconds
+2026-02-20 12:06:27.145408448+01:00
+2026-02-20 12:06:28.149532851+01:00
+2026-02-20 12:06:29.153622718+01:00
 ```

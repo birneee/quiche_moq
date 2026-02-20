@@ -30,6 +30,9 @@ pub(crate) struct PublishArgs {
     /// The input file path. "-" or unset means stdin (default).
     #[arg(long, short = 'i')]
     pub(crate) input: Option<PathBuf>,
+    /// Separator between objects in input
+    #[arg(long,short='s',default_value="\n",value_parser=parse_separator)]
+    pub(crate) separator: String,
 }
 
 #[derive(Parser, Clone)]
@@ -50,7 +53,7 @@ pub(crate) struct SubscribeArgs {
     pub(crate) setup_version: SetupVersion,
     /// Add separator between objects in output
     /// e.g. "\n"
-    #[arg(long,short='s',default_value="")]
+    #[arg(long,short='s',default_value="",value_parser=parse_separator)]
     pub(crate) separator: String,
 }
 
@@ -66,5 +69,12 @@ impl From<SetupVersion> for Version {
             SetupVersion::Draft07 => MOQ_VERSION_DRAFT_07,
             SetupVersion::Draft13 => MOQ_VERSION_DRAFT_13,
         }
+    }
+}
+
+fn parse_separator(s: &str) -> Result<String, String> {
+    match s {
+        "\\n" => Ok("\n".to_string()),
+        _ => Ok(s.to_string()),
     }
 }

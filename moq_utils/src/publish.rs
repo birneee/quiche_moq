@@ -13,6 +13,10 @@ use std::io;
 use std::os::unix::io::AsRawFd;
 use url::Url;
 
+struct AppData {
+    args: PublishArgs,
+}
+
 struct ConnAppData {
     moq_helper: MoqWebTransportHelper,
     namespace_trackname: NamespaceTrackname,
@@ -22,12 +26,12 @@ struct ConnAppData {
     line_buf: Vec<u8>,
 }
 
-type Endpoint = quiche_endpoint::Endpoint<ConnAppData, ()>;
-type Runner = runner::Runner<ConnAppData, (), ()>;
+type Endpoint = quiche_endpoint::Endpoint<ConnAppData, AppData>;
+type Runner = runner::Runner<ConnAppData, AppData, ()>;
 
 #[allow(clippy::field_reassign_with_default)]
 pub(crate) fn run_publish(args: &PublishArgs) {
-    let mut endpoint = Endpoint::new(None, EndpointConfig::default(), ());
+    let mut endpoint = Endpoint::new(None, EndpointConfig::default(), AppData { args: args.clone(), });
 
     let socket = Socket::bind("127.0.0.1:0").unwrap();
 
@@ -121,7 +125,7 @@ pub(crate) fn run_publish(args: &PublishArgs) {
 
 fn post_handle_recvs(r: &mut Runner) {
     for icid in &mut r.endpoint.conn_index_iter() {
-        let Some(conn) = r.endpoint.conn_mut(icid) else {
+        let (Some(conn), appdata) = r.endpoint.conn_with_app_data_mut(icid) else {
             continue;
         };
         conn.app_data.moq_helper.on_post_handle_recvs(&mut conn.conn);
@@ -139,6 +143,7 @@ fn post_handle_recvs(r: &mut Runner) {
             &mut conn.app_data.track_aliases,
             conn.app_data.input_fd,
             &mut conn.app_data.line_buf,
+            &appdata.args,
         );
     }
 }
@@ -150,6 +155,7 @@ fn post_handle_recvs_conn(
     track_aliases: &mut Vec<TrackAlias>,
     input_fd: i32,
     line_buf: &mut Vec<u8>,
+    args: &PublishArgs,
 ) {
     // Handle namespace publishing
     match moq.publish_namespace_status(namespace_trackname.namespace()) {
@@ -200,10 +206,14 @@ fn post_handle_recvs_conn(
         }
     }
 
-    // Extract complete lines and send each as an object
-    while let Some(pos) = line_buf.iter().position(|&b| b == b'\n') {
-        let line: Vec<u8> = line_buf.drain(..=pos).collect();
-        let payload = &line[..line.len() - 1]; // strip newline
+    let sep_bytes = args.separator.as_bytes();
+    assert!(!sep_bytes.is_empty());
+    // Separate input and send each as an object
+    while !line_buf.is_empty() {
+        let pos = line_buf.windows(sep_bytes.len()).position(|w| w == sep_bytes);
+        let Some(pos) = pos else { break; };
+        let mut payload: Vec<u8> = line_buf.drain(..pos + sep_bytes.len()).collect();
+        payload.truncate(pos);
         if payload.is_empty() {
             continue;
         }
@@ -212,7 +222,7 @@ fn post_handle_recvs_conn(
                 error!("send obj hdr error: {:?}", e);
                 continue;
             }
-            if let Err(e) = moq.send_obj_pld(payload, track_alias) {
+            if let Err(e) = moq.send_obj_pld(payload.as_slice(), track_alias) {
                 error!("send obj pld error: {:?}", e);
             }
         }
