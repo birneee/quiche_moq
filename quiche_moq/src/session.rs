@@ -80,6 +80,37 @@ pub struct MoqTransportSession {
     pending_sent_publish_namespace: HashMap<RequestId, PublishNamespaceMessage>,
 }
 
+#[cfg(feature = "qlog")]
+fn cm_qlog_message(cm: &ControlMessageEnum) -> serde_json::Value {
+    use quiche_moq_wire::control_message::GroupOrder;
+    let mut msg = serde_json::json!({ "type": cm.qlog_type_name() });
+    if let ControlMessageEnum::SubscribeOk(som) = cm {
+        msg["request_id"] = som.request_id().into();
+        if let Some(ta) = som.track_alias() {
+            msg["track_alias"] = ta.into();
+        }
+        let mut params: Vec<serde_json::Value> = vec![];
+        if som.expires() != 0 {
+            params.push(serde_json::json!({ "name": "expires", "value": som.expires() }));
+        }
+        params.push(serde_json::json!({
+            "name": "group_order",
+            "value": match som.group_order() { GroupOrder::Ascending => 1u64, GroupOrder::Descending => 2u64 },
+        }));
+        if let Some(loc) = som.largest_location() {
+            params.push(serde_json::json!({
+                "name": "largest_object",
+                "value": { "group": loc.group, "object": loc.object },
+            }));
+        }
+        msg["number_of_parameters"] = params.len().into();
+        if !params.is_empty() {
+            msg["parameters"] = params.into();
+        }
+    }
+    msg
+}
+
 #[quiche_moq_macros::generate_moq_handle]
 impl MoqTransportSession {
     /// Control stream is opened and the setup message has been exchanged.
@@ -248,7 +279,7 @@ impl MoqTransportSession {
                 name: "moqt:control_message_created".into(),
                 data: serde_json::json!({
                     "stream_id": control_stream_id.into_u64(),
-                    "message": { "message_type": cm.qlog_type_name() },
+                    "message": cm_qlog_message(cm),
                 }),
             })
             .ok();
@@ -313,7 +344,7 @@ impl MoqTransportSession {
                         name: "moqt:control_message_parsed".into(),
                         data: serde_json::json!({
                             "stream_id": control_stream_id.into_u64(),
-                            "message": { "message_type": cm.qlog_type_name() },
+                            "message": cm_qlog_message(&cm),
                         }),
                     })
                     .ok();

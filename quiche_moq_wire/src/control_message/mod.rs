@@ -11,7 +11,7 @@ pub use server_setup::ServerSetupMessage;
 pub use subscribe::SubscribeMessage;
 pub use publish_done::PublishDoneMessage;
 pub use request_error::RequestErrorMessage;
-pub use subscribe_ok::SubscribeOkMessage;
+pub use subscribe_ok::{GroupOrder, SubscribeOkMessage};
 pub use unsubscribe_namespace::UnsubscribeNamespaceMessage;
 pub use publish_ok::PublishOkMessage;
 use crate::control_message::header::ControlMessageHeader;
