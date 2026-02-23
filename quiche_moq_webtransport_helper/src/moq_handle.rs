@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use quiche::h3;
 use quiche_moq::{MoqTransportSession, PublishStatus, Result, StreamID, SubscriptionRequestAction};
-use quiche_moq::wire::{Location, Namespace, NamespaceTrackname, RequestId, TrackAlias};
+use quiche_moq::wire::{KeyValuePairs, Location, Namespace, NamespaceTrackname, RequestId, TrackAlias};
 use quiche_moq::wire::control_message::{
     PublishNamespaceMessage, RequestErrorMessage, SubscribeMessage, SubscribeOkMessage,
 };

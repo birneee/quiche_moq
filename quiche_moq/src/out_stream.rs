@@ -2,7 +2,7 @@ use crate::error::Result;
 use crate::Error;
 use log::trace;
 use octets::OctetsMut;
-use quiche_moq_wire::{SubgroupType, ToBytes, TrackAlias, Version};
+use quiche_moq_wire::{KeyValuePairs, SubgroupType, ToBytes, TrackAlias, Version};
 use quiche_moq_wire::object::ObjectHeader;
 use quiche_moq_wire::subgroup::SubgroupHeader;
 use quiche_utils::stream_id::StreamID;
@@ -49,6 +49,7 @@ impl OutStream {
         &mut self,
         object_id: Option<u64>,
         size: usize,
+        extension_headers: &KeyValuePairs,
         quic: &mut quiche::Connection,
         wt: &mut wt::Connection,
     ) -> Result<()> {
@@ -97,7 +98,7 @@ impl OutStream {
                             id
                         }
                     };
-                    let object_header = ObjectHeader::new(object_id, size, subgroup_ty);
+                    let object_header = ObjectHeader::new(object_id, size, subgroup_ty, extension_headers.clone());
                     let mut b = [0u8; 100];
                     let mut o = OctetsMut::with_slice(&mut b);
                     object_header.to_bytes(&mut o, self.version)?;
@@ -115,6 +116,7 @@ impl OutStream {
                                 "stream_id": self.stream_id.into_u64(),
                                 "object_id": object_header.id(),
                                 "extension_headers_length": object_header.extension_headers_len() as u64,
+                                "extension_headers": object_header.extension_headers_to_qlog(),
                                 "object_payload_length": object_header.payload_len() as u64,
                                 "object_status": object_header.status(),
                             }),
@@ -190,7 +192,7 @@ impl OutStream {
         wt: &mut wt::Connection,
         buf: &[u8],
     ) -> Result<()> {
-        self.send_obj_hdr(None, buf.len(), quic, wt)?;
+        self.send_obj_hdr(None, buf.len(), &KeyValuePairs::new(), quic, wt)?;
         let n = self.send_obj_pld(buf, wt, quic).unwrap();
         assert_eq!(n, buf.len());
         Ok(())

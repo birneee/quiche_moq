@@ -33,6 +33,9 @@ pub(crate) struct PublishArgs {
     /// Separator between objects in input
     #[arg(long,short='s',default_value="\n",value_parser=parse_separator)]
     pub(crate) separator: String,
+    /// Embed current Unix timestamp (microseconds) as an extension header in each object
+    #[arg(long)]
+    pub(crate) timestamp: bool,
 }
 
 #[derive(Parser, Clone)]

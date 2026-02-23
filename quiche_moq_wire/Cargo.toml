@@ -3,5 +3,9 @@ name = "quiche_moq_wire"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+qlog = ["dep:serde_json"]
+
 [dependencies]
 octets = { workspace = true }
+serde_json = { workspace = true, optional = true }

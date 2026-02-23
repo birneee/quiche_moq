@@ -19,6 +19,8 @@ mod version;
 
 pub use bytes::FromBytes;
 pub use bytes::ToBytes;
+pub use key_value_pair::{KeyValuePair, KeyValuePairValue};
+pub use key_value_pairs::KeyValuePairs;
 pub use error::Error;
 pub use error::Result;
 pub use parameter::Parameter;

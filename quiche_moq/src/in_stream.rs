@@ -146,6 +146,7 @@ impl InStream {
                     "subgroup_id": h.subgroup_id(),
                     "object_id": object_header.id(),
                     "extension_headers_length": object_header.extension_headers_len() as u64,
+                    "extension_headers": object_header.extension_headers_to_qlog(),
                     "object_payload_length": object_header.payload_len() as u64,
                     "object_status": object_header.status(),
                 }),

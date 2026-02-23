@@ -21,7 +21,7 @@ use quiche_moq_wire::control_message::{
 use quiche_moq_wire::object::ObjectHeader;
 use quiche_moq_wire::subgroup::SubgroupHeader;
 use quiche_moq_wire::{
-    DEFAULT_MAX_REQUEST_ID_SETUP_PARAMETER, FromBytes, Location, MOQ_VERSION_DRAFT_07,
+    DEFAULT_MAX_REQUEST_ID_SETUP_PARAMETER, FromBytes, KeyValuePairs, Location, MOQ_VERSION_DRAFT_07,
     MOQ_VERSION_DRAFT_11, MOQ_VERSION_DRAFT_12, MOQ_VERSION_DRAFT_16, Namespace, NamespaceTrackname,
     PROTOCOL_VIOLATION, Parameters, RESET_STREAM_CODE_DELIVERY_TIMEOUT, RequestId, Role,
     SetupParameters, ToBytes, TrackAlias, Tuple, Version,
@@ -569,6 +569,25 @@ impl MoqTransportSession {
         stream.send_obj(quic, wt, buf)
     }
 
+    /// Like `send_obj` but with explicit group/object IDs and custom extension headers.
+    #[allow(clippy::too_many_arguments)]
+    pub fn send_obj_with(
+        &mut self,
+        buf: &[u8],
+        group_id: Option<u64>,
+        object_id: Option<u64>,
+        extension_headers: &KeyValuePairs,
+        track_alias: TrackAlias,
+        wt: &mut wt::Connection,
+        h3: &mut h3::Connection,
+        quic: &mut quiche::Connection,
+    ) -> Result<()> {
+        self.send_obj_hdr_with(group_id, None, object_id, buf.len(), extension_headers, track_alias, wt, h3, quic)?;
+        let n = self.send_obj_pld(buf, track_alias, wt, quic)?;
+        assert_eq!(n, buf.len());
+        Ok(())
+    }
+
     /// Send object header. Auto-increments object ID within the current group.
     pub fn send_obj_hdr(
         &mut self,
@@ -578,7 +597,7 @@ impl MoqTransportSession {
         h3: &mut h3::Connection,
         quic: &mut quiche::Connection,
     ) -> Result<()> {
-        self.send_obj_hdr_with(None, None, None, size, track_alias, wt, h3, quic)
+        self.send_obj_hdr_with(None, None, None, size, &KeyValuePairs::new(), track_alias, wt, h3, quic)
     }
 
     /// `group_id`: `None` = same group as previous; `Some(id)` = explicit (must be non-decreasing;
@@ -593,6 +612,7 @@ impl MoqTransportSession {
         subgroup_id: Option<u64>,
         object_id: Option<u64>,
         size: usize,
+        extension_headers: &KeyValuePairs,
         track_alias: TrackAlias,
         wt: &mut wt::Connection,
         h3: &mut h3::Connection,
@@ -631,7 +651,7 @@ impl MoqTransportSession {
         }
 
         let stream_id = self.out_tracks[&track_alias].current_stream_id.unwrap();
-        self.out_streams.get_mut(&stream_id).unwrap().send_obj_hdr(object_id, size, quic, wt)
+        self.out_streams.get_mut(&stream_id).unwrap().send_obj_hdr(object_id, size, extension_headers, quic, wt)
     }
 
     pub fn send_obj_pld(

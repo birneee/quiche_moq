@@ -6,7 +6,7 @@ use quiche_mio_runner::quiche_endpoint::quiche::PROTOCOL_VERSION;
 use quiche_mio_runner::quiche_endpoint::{EndpointConfig, quiche};
 use quiche_mio_runner::{Socket, quiche_endpoint};
 use quiche_moq as moq;
-use quiche_moq::wire::{Location, NamespaceTrackname, REQUEST_ERROR_DOES_NOT_EXIST, TrackAlias, version_to_name};
+use quiche_moq::wire::{KeyValuePair, KeyValuePairs, Location, NamespaceTrackname, REQUEST_ERROR_DOES_NOT_EXIST, TrackAlias, version_to_name};
 use quiche_moq_webtransport_helper::{MoqHandle, MoqWebTransportHelper};
 use quiche_moq::PublishStatus;
 use std::fs;
@@ -222,8 +222,18 @@ fn post_handle_recvs_conn(
         }
         let obj_id = *conn_app_data.next_object_id;
         *conn_app_data.next_object_id += 1;
+        let extension_headers = if app_data.args.timestamp {
+            let micros = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_micros() as u64;
+            // 0x4000 is the first type ID in the first-come-first-served range (draft-16 §13)
+            KeyValuePairs::from(vec![KeyValuePair::new_varint(0x4000, micros).unwrap()])
+        } else {
+            KeyValuePairs::new()
+        };
         for &track_alias in conn_app_data.track_aliases.iter() {
-            if let Err(e) = moq.send_obj_hdr_with(Some(0), None, Some(obj_id), payload.len(), track_alias) {
+            if let Err(e) = moq.send_obj_hdr_with(Some(0), None, Some(obj_id), payload.len(), &extension_headers, track_alias) {
                 error!("send obj hdr error: {:?}", e);
                 continue;
             }

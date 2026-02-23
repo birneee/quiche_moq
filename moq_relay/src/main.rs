@@ -6,7 +6,7 @@ use quiche_mio_runner::Socket;
 use quiche_mio_runner::quiche_endpoint::{Endpoint, EndpointConfig, ServerConfig, quiche, ClientId};
 use quiche_moq as moq;
 use quiche_moq::{SubscriptionRequestAction};
-use quiche_moq::wire::{Location, Namespace, NamespaceTrackname, REQUEST_ERROR_DOES_NOT_EXIST, RequestId, TrackAlias, version_to_name};
+use quiche_moq::wire::{KeyValuePairs, Location, Namespace, NamespaceTrackname, REQUEST_ERROR_DOES_NOT_EXIST, RequestId, TrackAlias, version_to_name};
 use quiche_moq_webtransport_helper::{MoqHandle, MoqWebTransportHelper};
 use quiche_utils::cert::load_or_generate_keys;
 
@@ -203,7 +203,7 @@ fn post_handle_recvs(r: &mut Runner) {
     }
 
     // Phase 5: Forward object data from publishers to subscribers (streaming)
-    enum FwdStep { Hdr(usize), Pld(usize), Stop }
+    enum FwdStep { Hdr(usize, KeyValuePairs), Pld(usize), Stop }
     let (conns, appdata) = &mut r.endpoint.mut_conns_and_app_data();
     for (nt, sub) in appdata.subscriptions.iter_mut() {
         let Some(pub_ta) = sub.publisher_track_alias else { continue };
@@ -222,7 +222,7 @@ fn post_handle_recvs(r: &mut Runner) {
                                 if let Some(sg) = moq.subgroup_header(pub_ta) {
                                     sub.obj_group_id = sg.group_id();
                                 }
-                                FwdStep::Hdr(sub.obj_payload_len)
+                                FwdStep::Hdr(sub.obj_payload_len, hdr.extension_headers().clone())
                             }
                             Err(moq::Error::Done) => FwdStep::Stop,
                             Err(e) => { error!("read obj hdr for {}: {:?}", nt, e); FwdStep::Stop }
@@ -242,12 +242,12 @@ fn post_handle_recvs(r: &mut Runner) {
             // Forward to subscribers (publisher borrow released above).
             match step {
                 FwdStep::Stop => break,
-                FwdStep::Hdr(len) => {
+                FwdStep::Hdr(len, ext_hdrs) => {
                     for s in &sub.subscribers {
                         let Some(sub_ta) = s.track_alias else { continue };
                         if let Some(sub_conn) = conns.get_mut(s.client_id)
                             && let Some(mut moq) = sub_conn.app_data.moq_helper.moq_handle(&mut sub_conn.conn)
-                                && let Err(e) = moq.send_obj_hdr_with(Some(sub.obj_group_id), None, Some(sub.obj_object_id), len, sub_ta) {
+                                && let Err(e) = moq.send_obj_hdr_with(Some(sub.obj_group_id), None, Some(sub.obj_object_id), len, &ext_hdrs, sub_ta) {
                                     error!("send obj hdr to subscriber {} for {}: {:?}", s.client_id, nt, e);
                                 }
                     }

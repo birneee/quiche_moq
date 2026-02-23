@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-qlog = ["dep:qlog", "dep:serde_json", "quiche/qlog"]
+qlog = ["dep:qlog", "dep:serde_json", "quiche/qlog", "quiche_moq_wire/qlog"]
 
 [dependencies]
 quiche_moq_macros = { workspace = true }
