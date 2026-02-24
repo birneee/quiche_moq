@@ -53,8 +53,8 @@
                 lockFile = ./Cargo.lock;
                 outputHashes = {
                   "octets-0.3.4" = "sha256-s8arMNx469KgQT4llFOxXW/OVTeqPH/235yml9skuLY=";
-                  "quiche_endpoint-0.1.0" = "sha256-j+/0UKKS2uQ4guGx3JFqy0vxgISLY5fGtlF8w7Xj5/I=";
-                  "quiche_mio_runner-0.1.0" = "sha256-a3wIvAmonFX8l35uu6p8veCxz5wzh0WbU6zKt7PntCU=";
+                  "quiche_endpoint-0.1.0" = "sha256-AZaGGZwGiPueFVmuaquBFNt+CLDNFn0M1eyiISLKqeo=";
+                  "quiche_mio_runner-0.1.0" = "sha256-y08aR5qdWhJMYcUc+Xq/Zov7NxBTX2YPXvjwOhpaj5o=";
                 };
               };
               src = pkgs.lib.cleanSource ./.;
@@ -70,6 +70,7 @@
             };
         in
         {
+          packages.moq-relay = buildMember "moq-relay" "moq_relay";
           packages.moq-utils = buildMember "moq-utils" "moq_utils";
           packages.time-client-example = buildMember "time-client" "quiche_moq/examples/time-client";
           packages.time-server-example = buildMember "time-server" "quiche_moq/examples/time-server";
