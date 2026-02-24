@@ -77,6 +77,7 @@ pub(crate) fn run_publish(args: &PublishArgs) {
         &mut {
             let mut c = quiche::Config::new(PROTOCOL_VERSION).unwrap();
             MoqWebTransportHelper::configure_quic(&mut c);
+            c.set_max_idle_timeout(args.timeout);
             c.verify_peer(false);
             if keylog.is_some() {
                 c.log_keys()
@@ -136,6 +137,10 @@ fn post_handle_recvs(r: &mut Runner) {
             continue;
         };
         let (ad1, ad2) = SplitOff::<partial!(ConnAppData mut moq_helper, ! *)>::split_off_mut(&mut conn.app_data);
+        if conn.conn.is_closed() && *ad2.logged_connect {
+            info!("Server disconnected");
+            continue;
+        }
         ad1.moq_helper.on_post_handle_recvs(&mut conn.conn);
         let Some(mut moq) = ad1.moq_helper.moq_handle(&mut conn.conn) else {
             assert!(!conn.conn.is_timed_out());

@@ -939,6 +939,7 @@ name = "moq-relay"
 version = "0.1.0"
 dependencies = [
  "boring",
+ "clap",
  "env_logger",
  "log",
  "quiche_mio_runner",
@@ -946,6 +947,7 @@ dependencies = [
  "quiche_moq_webtransport_helper",
  "quiche_utils",
  "quiche_webtransport",
+ "url",
 ]
 
 [[package]]

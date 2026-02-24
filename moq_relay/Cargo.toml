@@ -12,3 +12,5 @@ log = "0.4.29"
 boring = { workspace = true }
 quiche_utils = { workspace = true }
 quiche_webtransport = { workspace = true }
+clap = { workspace = true }
+url = { workspace = true }

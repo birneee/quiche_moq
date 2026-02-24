@@ -1,3 +1,5 @@
+mod args;
+
 use std::collections::{HashMap, HashSet};
 use boring::ssl::{SslContextBuilder, SslMethod};
 use log::{LevelFilter, error, info};
@@ -9,6 +11,10 @@ use quiche_moq::{SubscriptionRequestAction};
 use quiche_moq::wire::{KeyValuePairs, Location, Namespace, NamespaceTrackname, REQUEST_ERROR_DOES_NOT_EXIST, RequestId, TrackAlias, version_to_name};
 use quiche_moq_webtransport_helper::{MoqHandle, MoqWebTransportHelper};
 use quiche_utils::cert::load_or_generate_keys;
+use url::Url;
+use clap::Parser;
+
+use crate::args::Args;
 
 type Runner = runner::Runner<ConnAppData, AppData, ()>;
 
@@ -26,13 +32,19 @@ struct SubscriberInfo {
     track_alias: Option<TrackAlias>,
 }
 
+struct PublisherInfo {
+    client_id: ClientId,
+    /// Request ID for the relay's SUBSCRIBE sent to the publisher (set in Phase 3).
+    request_id: Option<RequestId>,
+    /// Track alias from publisher's SUBSCRIBE_OK (set in Phase 4).
+    track_alias: Option<TrackAlias>,
+    /// Largest location from publisher's SUBSCRIBE_OK, forwarded to subscribers.
+    largest_location: Option<Location>,
+}
+
 struct Subscription {
-    /// The relay's own request_id used when subscribing to the publisher.
-    relay_request_id: Option<RequestId>,
-    /// Track alias from publisher's SUBSCRIBE_OK, for reading data.
-    publisher_track_alias: Option<TrackAlias>,
-    /// Publisher connection id.
-    publisher_id: ClientId,
+    /// Publisher state; None when publisher has disconnected.
+    publisher: Option<PublisherInfo>,
     subscribers: Vec<SubscriberInfo>,
     /// Payload length of the object currently being relayed (0 = no object in progress).
     obj_payload_len: usize,
@@ -44,17 +56,15 @@ struct Subscription {
     obj_group_id: u64,
     /// Object ID of the current object (from publisher's object header).
     obj_object_id: u64,
-    /// Largest location from publisher's SUBSCRIBE_OK, forwarded to subscribers.
-    largest_location: Option<Location>,
 }
 
 impl Subscription {
     fn is_sent(&self) -> bool {
-        self.relay_request_id.is_some()
+        self.publisher.as_ref().is_some_and(|p| p.request_id.is_some())
     }
 
     fn is_publisher_accepted(&self) -> bool {
-        self.publisher_track_alias.is_some()
+        self.publisher.as_ref().is_some_and(|p| p.track_alias.is_some())
     }
 
     fn has_accepted_subscribers(&self) -> bool {
@@ -73,8 +83,10 @@ fn main() {
         .filter_level(LevelFilter::Info)
         .parse_default_env()
         .init();
-    let socket = Socket::bind("0.0.0.0:8080").unwrap();
-    info!("relay listening on {}", socket.local_addr);
+    let args = Args::parse();
+    let socket = Socket::bind(format!("0.0.0.0:{}", args.port)).unwrap();
+    let local_addr = socket.local_addr;
+    info!("relay listening on {}", local_addr);
     let (cert, key) = load_or_generate_keys(&None, &None);
     let mut r = Runner::new(
         {
@@ -112,18 +124,50 @@ fn main() {
         None,
     );
     r.register_socket(socket);
+    if let Some(relay_url) = &args.relay {
+        let url = Url::parse(relay_url).unwrap();
+        let peer_addr = *url.socket_addrs(|| Some(443)).unwrap().first().unwrap();
+        let mut quic_cfg = quiche::Config::new(quiche::PROTOCOL_VERSION).unwrap();
+        quic_cfg.verify_peer(false);
+        MoqWebTransportHelper::configure_quic(&mut quic_cfg);
+        r.endpoint.connect(
+            None, local_addr, peer_addr, &mut quic_cfg,
+            ConnAppData {
+                moq_helper: MoqWebTransportHelper::new_client(url.clone(), moq::Config::default()),
+                announced_namespaces: HashSet::new(),
+                logged_connect: false,
+            },
+            None, None,
+        );
+        info!("connecting to relay {}", relay_url);
+    }
     r.run();
 }
 
 fn post_handle_recvs(r: &mut Runner) {
+    // Phase 0: Detect closed/timed-out connections and clean up state
+    let (conns, appdata) = r.endpoint.mut_conns_and_app_data();
+    for (cid, conn) in conns.iter_mut() {
+        if conn.conn.is_closed() {
+            info!("Client {} disconnected", cid);
+            appdata.namespaces.retain(|_, owner| *owner != cid);
+            for sub in appdata.subscriptions.values_mut() {
+                if sub.publisher.as_ref().is_some_and( |p| p.client_id == cid) {
+                    sub.publisher = None;
+                }
+                sub.subscribers.retain(|s| s.client_id != cid);
+            }
+        }
+    }
+
     // Phase 1: Per-connection processing (receive subscriptions, namespace publishes)
     let (conns, appdata) = &mut r.endpoint.mut_conns_and_app_data();
     for (icid, conn) in conns.iter_mut() {
         conn.app_data.moq_helper.on_post_handle_recvs(&mut conn.conn);
         let Some(moq) = conn.app_data.moq_helper.moq_handle(&mut conn.conn) else { continue };
         post_handle_recvs_conn(
-            icid, 
-            moq, 
+            icid,
+            moq,
             appdata,
             &mut conn.app_data.logged_connect,
         );
@@ -133,6 +177,7 @@ fn post_handle_recvs(r: &mut Runner) {
     let (conns, appdata) = &mut r.endpoint.mut_conns_and_app_data();
     for (icid, conn) in conns.iter_mut() {
         let Some(mut moq) = conn.app_data.moq_helper.moq_handle(&mut conn.conn) else { continue };
+        conn.app_data.announced_namespaces.retain(|ns| appdata.namespaces.contains_key(ns));
         for (ns, &publisher) in appdata.namespaces.iter() {
             if publisher == icid { continue; }
             if conn.app_data.announced_namespaces.contains(ns) { continue; }
@@ -152,16 +197,21 @@ fn post_handle_recvs(r: &mut Runner) {
     let (conns, appdata) = &mut r.endpoint.mut_conns_and_app_data();
     for (nt, sub) in appdata.subscriptions.iter_mut() {
         if sub.is_sent() { continue; }
-        let Some(&publisher) = appdata.namespaces.get(nt.namespace()) else { continue };
-        let Some(conn) = conns.get_mut(publisher) else { continue };
+        // Populate publisher from current namespace map if not set (e.g. after reconnect)
+        if sub.publisher.is_none() {
+            let Some(&pub_id) = appdata.namespaces.get(nt.namespace()) else { continue };
+            sub.publisher = Some(PublisherInfo { client_id: pub_id, request_id: None, track_alias: None, largest_location: None });
+        }
+        let Some(pub_info) = sub.publisher.as_mut() else { continue };
+        let Some(conn) = conns.get_mut(pub_info.client_id) else { continue };
         let Some(mut moq) = conn.app_data.moq_helper.moq_handle(&mut conn.conn) else { continue };
         match moq.subscribe(nt) {
             Ok(request_id) => {
-                sub.relay_request_id = Some(request_id);
-                info!("sent subscription request {} to {}", nt, publisher);
+                pub_info.request_id = Some(request_id);
+                info!("sent subscription request {} to {}", nt, pub_info.client_id);
             }
             Err(e) => {
-                error!("failed to subscribe {} on publisher {}: {:?}", nt, publisher, e);
+                error!("failed to subscribe {} on publisher {}: {:?}", nt, pub_info.client_id, e);
             }
         }
     }
@@ -169,16 +219,17 @@ fn post_handle_recvs(r: &mut Runner) {
     // Phase 4: Poll subscribe responses from publishers
     let (conns, appdata) = &mut r.endpoint.mut_conns_and_app_data();
     appdata.subscriptions.retain(|nt, sub| {
-        let Some(relay_request_id) = sub.relay_request_id else { return true };
-        if sub.publisher_track_alias.is_some() { return true; }
-        let Some(conn) = conns.get_mut(sub.publisher_id) else { return true };
+        let Some(pub_info) = sub.publisher.as_mut() else { return true };
+        let Some(request_id) = pub_info.request_id else { return true };
+        if pub_info.track_alias.is_some() { return true; }
+        let Some(conn) = conns.get_mut(pub_info.client_id) else { return true };
         let Some(mut moq) = conn.app_data.moq_helper.moq_handle(&mut conn.conn) else { return true };
-        let Some(response) = moq.poll_subscribe_response(relay_request_id) else { return true };
+        let Some(response) = moq.poll_subscribe_response(request_id) else { return true };
         match response {
             Ok((track_alias, ok_msg)) => {
-                sub.publisher_track_alias = Some(track_alias);
-                sub.largest_location = ok_msg.largest_location();
-                info!("accepted track {} by {}", nt, sub.publisher_id);
+                pub_info.track_alias = Some(track_alias);
+                pub_info.largest_location = ok_msg.largest_location();
+                info!("accepted track {} by {}", nt, pub_info.client_id);
                 true
             }
             Err(e) => {
@@ -192,11 +243,12 @@ fn post_handle_recvs(r: &mut Runner) {
     let (conns, appdata) = &mut r.endpoint.mut_conns_and_app_data();
     for sub in appdata.subscriptions.values_mut() {
         if !sub.is_publisher_accepted() { continue; }
+        let largest_location = sub.publisher.as_ref().and_then(|p| p.largest_location);
         for s in &mut sub.subscribers {
             let Some(pending_rid) = s.pending_request_id.take() else { continue };
             if let Some(sub_conn) = conns.get_mut(s.client_id)
                 && let Some(mut moq) = sub_conn.app_data.moq_helper.moq_handle(&mut sub_conn.conn) {
-                    s.track_alias = Some(moq.accept_subscription(pending_rid, sub.largest_location));
+                    s.track_alias = Some(moq.accept_subscription(pending_rid, largest_location));
                     info!("accept track for {}", s.client_id)
                 }
         }
@@ -206,12 +258,12 @@ fn post_handle_recvs(r: &mut Runner) {
     enum FwdStep { Hdr(usize, KeyValuePairs), Pld(usize), Stop }
     let (conns, appdata) = &mut r.endpoint.mut_conns_and_app_data();
     for (nt, sub) in appdata.subscriptions.iter_mut() {
-        let Some(pub_ta) = sub.publisher_track_alias else { continue };
+        let Some((pub_id, pub_ta)) = sub.publisher.as_ref().and_then(|p| p.track_alias.map(|ta| (p.client_id, ta))) else { continue };
         if !sub.has_accepted_subscribers() { continue; }
 
         loop {
             // Read one step from publisher; release borrow before forwarding.
-            let step = if let Some(pub_conn) = conns.get_mut(sub.publisher_id) {
+            let step = if let Some(pub_conn) = conns.get_mut(pub_id) {
                 if let Some(mut moq) = pub_conn.app_data.moq_helper.moq_handle(&mut pub_conn.conn) {
                     if sub.obj_payload_len == 0 {
                         match moq.read_obj_hdr(pub_ta) {
@@ -298,16 +350,18 @@ fn post_handle_recvs_conn(
             let sub = app_data.subscriptions.entry(nt.clone()).or_insert_with(|| {
                 info!("new subscription request {} from {} (publisher: {})", nt, cid, publisher_id);
                 Subscription {
-                    relay_request_id: None,
-                    publisher_track_alias: None,
-                    publisher_id,
+                    publisher: Some(PublisherInfo {
+                        client_id: publisher_id,
+                        request_id: None,
+                        track_alias: None,
+                        largest_location: None,
+                    }),
                     subscribers: Vec::new(),
                     obj_payload_len: 0,
                     obj_forwarded: 0,
                     obj_buf: Vec::new(),
                     obj_group_id: 0,
                     obj_object_id: 0,
-                    largest_location: None,
                 }
             });
             if !sub.is_publisher_accepted() {

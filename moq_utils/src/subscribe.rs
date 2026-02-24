@@ -69,6 +69,7 @@ pub(crate) fn run_subscribe(args: &SubscribeArgs) {
             c.verify_peer(false);
             c.set_application_protos(&[ALPN_HTTP_3]).unwrap();
             MoqWebTransportHelper::configure_quic(&mut c);
+            c.set_max_idle_timeout(args.timeout);
             if keylog.is_some() {
                 c.log_keys()
             }

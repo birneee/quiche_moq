@@ -36,6 +36,9 @@ pub(crate) struct PublishArgs {
     /// Embed current Unix timestamp (microseconds) as an extension header in each object
     #[arg(long)]
     pub(crate) timestamp: bool,
+    /// Maximum QUIC idle timeout in milliseconds
+    #[arg(long, default_value_t = 30000)]
+    pub(crate) timeout: u64,
 }
 
 #[derive(Parser, Clone)]
@@ -58,6 +61,9 @@ pub(crate) struct SubscribeArgs {
     /// e.g. "\n"
     #[arg(long,short='s',default_value="",value_parser=parse_separator)]
     pub(crate) separator: String,
+    /// Maximum QUIC idle timeout in milliseconds
+    #[arg(long, default_value_t = 30000)]
+    pub(crate) timeout: u64,
 }
 
 #[derive(Parser, Copy, Clone, clap::ValueEnum)]
