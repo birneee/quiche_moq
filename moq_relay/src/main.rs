@@ -282,7 +282,7 @@ fn post_handle_recvs(r: &mut Runner) {
     }
 
     // Phase 5: Forward object data from publishers to subscribers (streaming)
-    enum FwdStep { Hdr(usize, KeyValuePairs), Pld(usize), Stop }
+    enum FwdStep { Hdr(usize, KeyValuePairs), Pld(usize), Stop, Fin }
     let (conns, appdata) = &mut r.endpoint.mut_conns_and_app_data();
     for (nt, sub) in appdata.subscriptions.iter_mut() {
         let Some((pub_id, pub_ta)) = sub.publisher.as_ref().and_then(|p| p.track_alias.map(|ta| (p.client_id, ta))) else { continue };
@@ -304,6 +304,7 @@ fn post_handle_recvs(r: &mut Runner) {
                                 FwdStep::Hdr(sub.obj_payload_len, hdr.extension_headers().clone())
                             }
                             Err(moq::Error::Done) => FwdStep::Stop,
+                            Err(moq::Error::Fin) => FwdStep::Fin,
                             Err(e) => { error!("read obj hdr for {}: {:?}", nt, e); FwdStep::Stop }
                         }
                     } else {
@@ -320,6 +321,12 @@ fn post_handle_recvs(r: &mut Runner) {
 
             // Forward to subscribers (publisher borrow released above).
             match step {
+                FwdStep::Fin => {
+                    info!("publisher done for {}", nt);
+                    sub.publisher = None;
+                    for s in &mut sub.subscribers { s.publisher_gone = true; }
+                    break;
+                }
                 FwdStep::Stop => break,
                 FwdStep::Hdr(len, ext_hdrs) => {
                     for s in &sub.subscribers {

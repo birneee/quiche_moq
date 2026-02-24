@@ -60,6 +60,8 @@ pub struct MoqTransportSession {
     pub(crate) out_tracks: HashMap<TrackAlias, OutTrack>,
     /// only used by draft 12 and newer
     next_out_track_alias: TrackAlias,
+    /// Active subscriptions: request_id → track_alias. Used to route PUBLISH_DONE to the right track.
+    active_subscriptions: HashMap<RequestId, TrackAlias>,
     /// Subscribe requests the peer has not responded to.
     pending_subscribe: HashMap<RequestId, PendingSubscribe>,
     /// Received subscribe responses not yet polled by upper layer
@@ -153,6 +155,7 @@ impl MoqTransportSession {
             in_tracks: HashMap::new(),
             out_tracks: HashMap::new(),
             next_out_track_alias: 0,
+            active_subscriptions: HashMap::new(),
             pending_subscribe: HashMap::new(),
             pending_subscribe_responses: HashMap::new(),
             pending_streams: HashMap::new(),
@@ -197,6 +200,7 @@ impl MoqTransportSession {
             in_tracks: HashMap::new(),
             out_tracks: HashMap::new(),
             next_out_track_alias: 0,
+            active_subscriptions: HashMap::new(),
             pending_subscribe: HashMap::new(),
             pending_subscribe_responses: HashMap::new(),
             pending_streams: HashMap::new(),
@@ -388,6 +392,7 @@ impl MoqTransportSession {
                                 .unwrap()
                                 .mark_stream_readable(stream_id);
                         }
+                        self.active_subscriptions.insert(req_id, track_alias);
                         self.pending_subscribe_responses
                             .insert(req_id, Ok((track_alias, cm)));
                     }
@@ -396,7 +401,11 @@ impl MoqTransportSession {
                         let _req = self.pending_subscribe.remove(&req_id).unwrap();
                         self.pending_subscribe_responses.insert(req_id, Err(cm));
                     }
-                    ControlMessageEnum::PublishDone(_cm) => {}
+                    ControlMessageEnum::PublishDone(cm) => {
+                        if let Some(&track_alias) = self.active_subscriptions.get(&cm.request_id()) && let Some(track) = self.in_tracks.get_mut(&track_alias) {
+                            track.mark_done(cm.stream_count());
+                        }
+                    }
                     ControlMessageEnum::PublishNamespace(cm) => {
                         let request_id = cm.request_id().unwrap(); //todo
                         assert!(request_id <= self.out_max_request_id, "INVALID_REQUEST_ID");
@@ -868,7 +877,11 @@ impl MoqTransportSession {
             return Err(Error::Done);
         };
         loop {
-            let stream_id = track.current_stream().ok_or(Error::Done)?;
+            let stream_id = match track.current_stream() {
+                Some(id) => id,
+                None if track.is_fully_done() => return Err(Error::Fin),
+                None => return Err(Error::Done),
+            };
             let stream = self.in_streams.get_mut(&stream_id).unwrap();
             match stream.read_obj_hdr(quic, h3, wt) {
                 Ok(v) => return Ok(v),

@@ -14,6 +14,9 @@ pub struct PublishDoneMessage {
 }
 
 impl PublishDoneMessage {
+    pub fn request_id(&self) -> u64 { self.request_id }
+    pub fn stream_count(&self) -> u64 { self.stream_count }
+
     pub fn new(request_id: u64, status_code: u64) -> Self {
         Self {
             request_id,
