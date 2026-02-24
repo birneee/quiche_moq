@@ -1,6 +1,6 @@
 mod args;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use boring::ssl::{SslContextBuilder, SslMethod};
 use log::{LevelFilter, error, info};
 use quiche_mio_runner as runner;
@@ -20,16 +20,23 @@ type Runner = runner::Runner<ConnAppData, AppData, ()>;
 
 struct ConnAppData {
     moq_helper: MoqWebTransportHelper,
-    announced_namespaces: HashSet<Namespace>,
+    /// Namespaces announced to this connection: namespace → request_id used in publish_namespace.
+    announced_namespaces: HashMap<Namespace, RequestId>,
     logged_connect: bool,
 }
 
 struct SubscriberInfo {
     client_id: ClientId,
-    /// Subscriber's request_id held until publisher accepts; cleared once accepted.
-    pending_request_id: Option<RequestId>,
-    /// Set once publisher accepts and relay sends SUBSCRIBE_OK to subscriber.
+    /// Subscriber's request_id; kept for the lifetime of the subscription.
+    request_id: RequestId,
+    /// Set once relay sends SUBSCRIBE_OK to subscriber (Phase 4.5).
     track_alias: Option<TrackAlias>,
+    /// Set when the publisher disconnects; triggers PUBLISH_DONE in Phase 4.6.
+    publisher_gone: bool,
+}
+
+impl SubscriberInfo {
+    fn is_accepted(&self) -> bool { self.track_alias.is_some() }
 }
 
 struct PublisherInfo {
@@ -98,7 +105,7 @@ fn main() {
             Some({
                 let mut c = ServerConfig::new(|_| ConnAppData {
                     moq_helper: MoqWebTransportHelper::new_server(moq::Config::default()),
-                    announced_namespaces: HashSet::new(),
+                    announced_namespaces: HashMap::new(),
                     logged_connect: false,
                 });
                 c.client_config = {
@@ -134,7 +141,7 @@ fn main() {
             None, local_addr, peer_addr, &mut quic_cfg,
             ConnAppData {
                 moq_helper: MoqWebTransportHelper::new_client(url.clone(), moq::Config::default()),
-                announced_namespaces: HashSet::new(),
+                announced_namespaces: HashMap::new(),
                 logged_connect: false,
             },
             None, None,
@@ -145,15 +152,19 @@ fn main() {
 }
 
 fn post_handle_recvs(r: &mut Runner) {
-    // Phase 0: Detect closed/timed-out connections and clean up state
+    // Phase 0: Detect closed connections and clean up state.
+    // Namespace un-announcement happens in Phase 2; subscriber notifications in Phase 4.6.
     let (conns, appdata) = r.endpoint.mut_conns_and_app_data();
     for (cid, conn) in conns.iter_mut() {
         if conn.conn.is_closed() {
             info!("Client {} disconnected", cid);
             appdata.namespaces.retain(|_, owner| *owner != cid);
             for sub in appdata.subscriptions.values_mut() {
-                if sub.publisher.as_ref().is_some_and( |p| p.client_id == cid) {
+                if sub.publisher.as_ref().is_some_and(|p| p.client_id == cid) {
                     sub.publisher = None;
+                    for s in &mut sub.subscribers {
+                        s.publisher_gone = true;
+                    }
                 }
                 sub.subscribers.retain(|s| s.client_id != cid);
             }
@@ -173,18 +184,20 @@ fn post_handle_recvs(r: &mut Runner) {
         );
     }
 
-    // Phase 2: Announce known namespaces to all connected Moq clients
+    // Phase 2: Un-announce gone namespaces and announce new ones to all connected MoQ clients.
     let (conns, appdata) = &mut r.endpoint.mut_conns_and_app_data();
     for (icid, conn) in conns.iter_mut() {
         let Some(mut moq) = conn.app_data.moq_helper.moq_handle(&mut conn.conn) else { continue };
-        conn.app_data.announced_namespaces.retain(|ns| appdata.namespaces.contains_key(ns));
+        conn.app_data.announced_namespaces.retain(|ns, rid| {
+            if appdata.namespaces.contains_key(ns) { true } else { moq.publish_namespace_done(*rid); false }
+        });
         for (ns, &publisher) in appdata.namespaces.iter() {
             if publisher == icid { continue; }
-            if conn.app_data.announced_namespaces.contains(ns) { continue; }
+            if conn.app_data.announced_namespaces.contains_key(ns) { continue; }
             match moq.publish_namespace(ns.0.0.clone()) {
-                Ok(()) => {
+                Ok(request_id) => {
                     info!("announced namespace {} to {}", ns, icid);
-                    conn.app_data.announced_namespaces.insert(ns.clone());
+                    conn.app_data.announced_namespaces.insert(ns.clone(), request_id);
                 }
                 Err(e) => {
                     error!("failed to announce namespace {} to {}: {:?}", ns, icid, e);
@@ -245,13 +258,27 @@ fn post_handle_recvs(r: &mut Runner) {
         if !sub.is_publisher_accepted() { continue; }
         let largest_location = sub.publisher.as_ref().and_then(|p| p.largest_location);
         for s in &mut sub.subscribers {
-            let Some(pending_rid) = s.pending_request_id.take() else { continue };
+            if s.is_accepted() { continue; }
             if let Some(sub_conn) = conns.get_mut(s.client_id)
                 && let Some(mut moq) = sub_conn.app_data.moq_helper.moq_handle(&mut sub_conn.conn) {
-                    s.track_alias = Some(moq.accept_subscription(pending_rid, largest_location));
+                    s.track_alias = Some(moq.accept_subscription(s.request_id, largest_location));
                     info!("accept track for {}", s.client_id)
                 }
         }
+    }
+
+    // Phase 4.6: Send PUBLISH_DONE to subscribers whose publisher disconnected, then remove them.
+    let (conns, appdata) = &mut r.endpoint.mut_conns_and_app_data();
+    for sub in appdata.subscriptions.values_mut() {
+        sub.subscribers.retain(|s| {
+            if !s.publisher_gone { return true; }
+            if let Some(sub_conn) = conns.get_mut(s.client_id)
+                && let Some(mut moq) = sub_conn.app_data.moq_helper.moq_handle(&mut sub_conn.conn)
+            {
+                moq.publish_done(s.request_id);
+            }
+            false
+        });
     }
 
     // Phase 5: Forward object data from publishers to subscribers (streaming)
@@ -340,7 +367,7 @@ fn post_handle_recvs_conn(
         let nt = &cm.namespace_trackname;
         // Skip subscriptions already queued from a previous frame.
         if app_data.subscriptions.get(nt)
-            .map(|sub| sub.subscribers.iter().any(|s| s.pending_request_id == Some(*request_id)))
+            .map(|sub| sub.subscribers.iter().any(|s| !s.is_accepted() && s.request_id == *request_id))
             .unwrap_or(false)
         {
             return SubscriptionRequestAction::Keep;
@@ -367,7 +394,7 @@ fn post_handle_recvs_conn(
             if !sub.is_publisher_accepted() {
                 info!("queued subscriber {} for {} (awaiting publisher accept)", cid, nt);
             }
-            sub.subscribers.push(SubscriberInfo { client_id: cid, pending_request_id: Some(*request_id), track_alias: None });
+            sub.subscribers.push(SubscriberInfo { client_id: cid, request_id: *request_id, track_alias: None, publisher_gone: false });
             SubscriptionRequestAction::Keep
         } else {
             info!("reject subscription {} from {} (no publisher)", nt, cid);

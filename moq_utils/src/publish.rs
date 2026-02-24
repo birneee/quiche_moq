@@ -6,7 +6,7 @@ use quiche_mio_runner::quiche_endpoint::quiche::PROTOCOL_VERSION;
 use quiche_mio_runner::quiche_endpoint::{EndpointConfig, quiche};
 use quiche_mio_runner::{Socket, quiche_endpoint};
 use quiche_moq as moq;
-use quiche_moq::wire::{KeyValuePair, KeyValuePairs, Location, NamespaceTrackname, REQUEST_ERROR_DOES_NOT_EXIST, TrackAlias, version_to_name};
+use quiche_moq::wire::{KeyValuePair, KeyValuePairs, Location, NamespaceTrackname, REQUEST_ERROR_DOES_NOT_EXIST, RequestId, TrackAlias, version_to_name};
 use quiche_moq_webtransport_helper::{MoqHandle, MoqWebTransportHelper};
 use quiche_moq::PublishStatus;
 use std::fs;
@@ -22,6 +22,8 @@ struct AppData {
 struct ConnAppData {
     moq_helper: MoqWebTransportHelper,
     namespace_trackname: NamespaceTrackname,
+    /// Request ID returned by publish_namespace; None until the call is made.
+    namespace_request_id: Option<RequestId>,
     announced: bool,
     logged_connect: bool,
     track_aliases: Vec<TrackAlias>,
@@ -90,6 +92,7 @@ pub(crate) fn run_publish(args: &PublishArgs) {
                 moq::Config::default(),
             ),
             namespace_trackname: args.namespace_trackname.parse().unwrap(),
+            namespace_request_id: None,
             announced: false,
             logged_connect: false,
             track_aliases: Vec::new(),
@@ -169,19 +172,23 @@ fn post_handle_recvs_conn(
     app_data: &AppData,
 ) {
     // Handle namespace publishing
-    match moq.publish_namespace_status(conn_app_data.namespace_trackname.namespace()) {
-        PublishStatus::Unknown => {
-            moq.publish_namespace(conn_app_data.namespace_trackname.namespace().0.0.clone())
+    match *conn_app_data.namespace_request_id {
+        None => {
+            let rid = moq.publish_namespace(conn_app_data.namespace_trackname.namespace().0.0.clone())
                 .unwrap();
+            *conn_app_data.namespace_request_id = Some(rid);
             info!("publishing namespace {}", conn_app_data.namespace_trackname.namespace());
         }
-        PublishStatus::Pending => {}
-        PublishStatus::Accepted => {
-            if !*conn_app_data.announced {
-                info!("announced namespace {} successfully", conn_app_data.namespace_trackname.namespace());
-                *conn_app_data.announced = true;
+        Some(rid) => match moq.publish_namespace_status(rid) {
+            PublishStatus::Pending => {}
+            PublishStatus::Accepted => {
+                if !*conn_app_data.announced {
+                    info!("announced namespace {} successfully", conn_app_data.namespace_trackname.namespace());
+                    *conn_app_data.announced = true;
+                }
             }
-        }
+            PublishStatus::Unknown => {}
+        },
     }
 
     // Handle incoming subscriptions

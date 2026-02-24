@@ -15,8 +15,9 @@ use quiche::{Shutdown, h3};
 use quiche_moq_wire::ErrorCode;
 use quiche_moq_wire::control_message::subscribe::{FilterType, SubscribeMessage};
 use quiche_moq_wire::control_message::{
-    ClientSetupMessage, ControlMessageEnum, PublishNamespaceMessage, PublishOkMessage,
-    RequestErrorMessage, ServerSetupMessage, SubscribeOkMessage,
+    ClientSetupMessage, ControlMessageEnum, PublishDoneMessage, PublishNamespaceDoneMessage,
+    PublishNamespaceMessage, PublishOkMessage, RequestErrorMessage, ServerSetupMessage,
+    SubscribeOkMessage,
 };
 use quiche_moq_wire::object::ObjectHeader;
 use quiche_moq_wire::subgroup::SubgroupHeader;
@@ -30,7 +31,7 @@ use quiche_utils::stream_id::StreamID;
 use quiche_webtransport as wt;
 use short_buf::ShortBuf;
 use smallvec::SmallVec;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 const INITIAL_CLIENT_REQUEST_ID: RequestId = 0;
 const INITIAL_SERVER_REQUEST_ID: RequestId = 1;
@@ -75,8 +76,12 @@ pub struct MoqTransportSession {
     pub(crate) out_streams: HashMap<StreamID, OutStream>,
     config: Config,
     closed: bool,
-    /// Namespaces this connection is subscribed to from the peer.
-    subscribed_namespaces: HashSet<Namespace>,
+    /// Namespaces we announced (outgoing PUBLISH_NAMESPACE), accepted by peer (PUBLISH_OK received).
+    /// Maps request_id we used → namespace; needed to send PUBLISH_NAMESPACE_DONE.
+    sent_namespaces: HashMap<RequestId, Namespace>,
+    /// Namespaces the peer announced (incoming PUBLISH_NAMESPACE), accepted by us.
+    /// Maps request_id they used → namespace; needed to process incoming PUBLISH_NAMESPACE_DONE.
+    received_namespaces: HashMap<RequestId, Namespace>,
     pending_sent_publish_namespace: HashMap<RequestId, PublishNamespaceMessage>,
 }
 
@@ -156,7 +161,8 @@ impl MoqTransportSession {
             out_streams: HashMap::new(),
             config: config.clone(),
             closed: false,
-            subscribed_namespaces: HashSet::new(),
+            sent_namespaces: HashMap::new(),
+            received_namespaces: HashMap::new(),
             pending_sent_publish_namespace: HashMap::new(),
         };
         s.send_control_message(
@@ -199,7 +205,8 @@ impl MoqTransportSession {
             out_streams: HashMap::new(),
             config,
             closed: false,
-            subscribed_namespaces: HashSet::new(),
+            sent_namespaces: HashMap::new(),
+            received_namespaces: HashMap::new(),
             pending_sent_publish_namespace: HashMap::new(),
         }
     }
@@ -432,13 +439,21 @@ impl MoqTransportSession {
                     ControlMessageEnum::RequestOk(_cm) => {
                         // todo relate to announce and make info available to application
                     }
+                    ControlMessageEnum::PublishNamespaceDone(cm) => {
+                        match (cm.request_id(), cm.namespace()) {
+                            (Some(rid), None) => { self.received_namespaces.remove(&rid); } // draft 16+
+                            (None, Some(ns)) => { self.received_namespaces.retain(|_, v| v != ns); } // draft 07–15
+                            _ => {}
+                        }
+                    }
                     ControlMessageEnum::PublishOk(cm) => {
+                        let request_id = cm.request_id();
                         let pom = self
                             .pending_sent_publish_namespace
-                            .remove(&cm.request_id())
+                            .remove(&request_id)
                             .unwrap();
-                        self.subscribed_namespaces
-                            .insert(pom.take_track_namespace());
+                        self.sent_namespaces
+                            .insert(request_id, pom.take_track_namespace());
                     }
                     _ => unimplemented!(),
                 }
@@ -817,7 +832,7 @@ impl MoqTransportSession {
             .pending_received_publish_namespace
             .remove(&request_id)
             .unwrap();
-        self.subscribed_namespaces.insert(cm.take_track_namespace());
+        self.received_namespaces.insert(request_id, cm.take_track_namespace());
     }
 
     pub fn remaining_object_payload(&self, track_alias: TrackAlias) -> Result<usize> {
@@ -913,9 +928,10 @@ impl MoqTransportSession {
         namespace: Vec<Vec<u8>>,
         wt: &mut wt::Connection,
         quic: &mut quiche::Connection,
-    ) -> Result<()> {
+    ) -> Result<RequestId> {
+        let request_id = self.next_request_id;
         let cm = ControlMessageEnum::PublishNamespace(PublishNamespaceMessage::new(
-            Some(self.next_request_id),
+            Some(request_id),
             Namespace(Tuple(namespace)),
             Parameters(vec![]),
         ));
@@ -923,20 +939,49 @@ impl MoqTransportSession {
         let ControlMessageEnum::PublishNamespace(cm) = cm else {
             unreachable!()
         };
-        self.pending_sent_publish_namespace
-            .insert(self.next_request_id, cm);
+        self.pending_sent_publish_namespace.insert(request_id, cm);
         self.next_request_id += 2;
-        Ok(())
+        Ok(request_id)
     }
 
-    pub fn publish_namespace_status(&self, namespace: &Namespace) -> PublishStatus {
-        if self.subscribed_namespaces.contains(namespace) {
+    /// Send PUBLISH_DONE to notify the peer that a subscription has ended.
+    /// `request_id` is the subscriber's original request_id.
+    pub fn publish_done(
+        &mut self,
+        request_id: RequestId,
+        wt: &mut wt::Connection,
+        quic: &mut quiche::Connection,
+    ) {
+        self.send_control_message(
+            quic,
+            wt,
+            &ControlMessageEnum::PublishDone(PublishDoneMessage::new(request_id, 0)),
+        );
+    }
+
+    /// Send PUBLISH_NAMESPACE_DONE to un-announce a namespace previously announced to the peer.
+    /// No-op if the namespace was not accepted yet (still pending).
+    pub fn publish_namespace_done(
+        &mut self,
+        request_id: RequestId,
+        wt: &mut wt::Connection,
+        quic: &mut quiche::Connection,
+    ) {
+        let Some(namespace) = self.sent_namespaces.remove(&request_id) else { return };
+        self.send_control_message(
+            quic,
+            wt,
+            &ControlMessageEnum::PublishNamespaceDone(PublishNamespaceDoneMessage::new(
+                Some(request_id),
+                Some(namespace),
+            )),
+        );
+    }
+
+    pub fn publish_namespace_status(&self, request_id: RequestId) -> PublishStatus {
+        if self.sent_namespaces.contains_key(&request_id) {
             Accepted
-        } else if self
-            .pending_sent_publish_namespace
-            .values()
-            .any(|n| n.track_namespace() == namespace)
-        {
+        } else if self.pending_sent_publish_namespace.contains_key(&request_id) {
             Pending
         } else {
             Unknown

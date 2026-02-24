@@ -13,6 +13,17 @@ pub struct PublishDoneMessage {
     error_reason: ReasonPhrase,
 }
 
+impl PublishDoneMessage {
+    pub fn new(request_id: u64, status_code: u64) -> Self {
+        Self {
+            request_id,
+            status_code,
+            stream_count: 0,
+            error_reason: ReasonPhrase(String::new()),
+        }
+    }
+}
+
 impl ControlMessage for PublishDoneMessage {
     const MESSAGE_IDS: &'static [u64] = &[PUBLISH_DONE_MESSAGE_ID];
 

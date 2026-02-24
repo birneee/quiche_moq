@@ -4,6 +4,7 @@ use crate::error::Error::ProtocolViolation;
 use crate::{control_message, Version, MOQ_VERSION_DRAFT_07, MOQ_VERSION_DRAFT_10, MOQ_VERSION_DRAFT_11, MOQ_VERSION_DRAFT_16};
 use octets::{Octets, OctetsMut};
 pub use publish_namespace::PublishNamespaceMessage;
+pub use publish_namespace_done::PublishNamespaceDoneMessage;
 pub use request_ok::RequestOkMessage;
 pub use client_setup::ClientSetupMessage;
 pub use requests_blocked::RequestsBlockedMessage;
@@ -19,6 +20,7 @@ use crate::control_message::track_status::TrackStatusMessage;
 use crate::octets::{peek_varint, put_u16_at, put_varint_with_len_at};
 
 mod publish_namespace;
+mod publish_namespace_done;
 mod request_ok;
 mod client_setup;
 pub(crate) mod header;
@@ -81,6 +83,7 @@ control_message_enum! {
     PublishDone(PublishDoneMessage),
     RequestError(RequestErrorMessage),
     PublishNamespace(PublishNamespaceMessage),
+    PublishNamespaceDone(PublishNamespaceDoneMessage),
     RequestOk(RequestOkMessage),
     UnsubscribeNamespace(UnsubscribeNamespaceMessage),
     TrackStatus(TrackStatusMessage),
