@@ -14,7 +14,7 @@ use quiche_moq::wire::{NamespaceTrackname, RequestId, TrackAlias};
 use quiche_moq_webtransport_helper::{MoqHandle, MoqWebTransportHelper};
 use std::fs;
 use std::fs::File;
-use std::io::Write;
+use std::io::{Write, stdout};
 use url::Url;
 
 struct SubscribeState {
@@ -23,7 +23,7 @@ struct SubscribeState {
     obj_hdr: Option<ObjectHeader>,
     obj_buf: BytesMut,
     namespace_trackname: NamespaceTrackname,
-    output: Option<File>,
+    output: Option<Box<dyn Write>>,
 }
 
 struct ConnAppData {
@@ -52,10 +52,10 @@ pub(crate) fn run_subscribe(args: &SubscribeArgs) {
             .unwrap()
     });
 
-    let output = match &args.output {
-        None => Some(File::create("/dev/stdout").unwrap()),
-        Some(o) if o.to_str().unwrap() == "-" => Some(File::create("/dev/stdout").unwrap()),
-        Some(o) => Some(File::create(o).unwrap()),
+    let output: Option<Box<dyn Write>> = match &args.output {
+        None => Some(Box::new(stdout())),
+        Some(o) if o.to_str().unwrap() == "-" => Some(Box::new(stdout())),
+        Some(o) => Some(Box::new(File::create(o).unwrap())),
     };
 
     info!("connect to {}", peer_addr);

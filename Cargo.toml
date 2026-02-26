@@ -27,6 +27,7 @@ mio = "1.0"
 mp4 = "0.14.0"
 octets = "0.3"
 quiche = { version = "0.24"}
+qlog = { version = "0.15" }
 quiche_h3_utils = { path="quiche_h3_utils" }
 #quiche_mio_runner = { path="../quiche_mio_runner" }
 quiche_mio_runner = { git = "https://github.com/birneee/quiche_mio_runner" }

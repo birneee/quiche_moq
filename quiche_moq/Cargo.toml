@@ -17,7 +17,7 @@ log = { workspace = true }
 smallvec = { workspace = true }
 quiche_utils = { workspace = true }
 partial-borrow = "1.0.1"
-qlog = { version = "0.15", optional = true }
+qlog = { workspace = true, optional = true }
 serde_json = { version = "1", optional = true }
 
 [dev-dependencies]
