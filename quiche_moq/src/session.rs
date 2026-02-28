@@ -629,6 +629,7 @@ impl MoqTransportSession {
     /// `subgroup_id`: `None` = same subgroup as previous; `Some(id)` = explicit
     ///   (a different value within the same group also opens a new stream per the spec).
     /// `object_id`: `None` = auto-increment; `Some(id)` = explicit (must be >= next expected in this subgroup).
+    /// - [`Error::InsufficientCapacity`]: QUIC stream capacity exhausted; retry later.
     #[allow(clippy::too_many_arguments)]
     pub fn send_obj_hdr_with(
         &mut self,
