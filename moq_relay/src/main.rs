@@ -337,6 +337,7 @@ fn post_handle_recvs(r: &mut Runner) {
                     if let Some(sub_conn) = conns.get_mut(s.client_id)
                         && let Some(mut moq) = sub_conn.app_data.moq_helper.moq_handle(&mut sub_conn.conn)
                     {
+                        error!("reset stream for subscriber {} on {}: upstream subgroup canceled", s.client_id, nt);
                         moq.reset_current_track_stream(sub_ta);
                     }
                     s.remaining = 0;
@@ -356,6 +357,7 @@ fn post_handle_recvs(r: &mut Runner) {
                     {
                         if need_header {
                             if s.remaining != 0 {
+                                error!("reset stream for subscriber {} on {}: subscriber is behind, skipping to {:?}", s.client_id, nt, sub_loc);
                                 moq.reset_current_track_stream(sub_ta);
                                 s.remaining = 0;
                             }

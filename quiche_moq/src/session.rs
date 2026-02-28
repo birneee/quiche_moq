@@ -703,7 +703,8 @@ impl MoqTransportSession {
         quic: &mut quiche::Connection,
     ) {
         let Some(stream_id) = self.out_tracks[&track_alias].current_stream_id else { return };
-        quic.stream_shutdown(stream_id.into_u64(), Shutdown::Write, 0x1).ok(); // 0x1 = CANCELED
+        // TODO: RESET_STREAM_CODE_DELIVERY_TIMEOUT is probably not the right code here
+        quic.stream_shutdown(stream_id.into_u64(), Shutdown::Write, RESET_STREAM_CODE_DELIVERY_TIMEOUT).ok();
         self.out_streams.remove(&stream_id);
         self.out_tracks.get_mut(&track_alias).unwrap().current_stream_id = None;
     }
