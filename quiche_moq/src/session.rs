@@ -663,10 +663,12 @@ impl MoqTransportSession {
             }
             let eff_group = group_id.unwrap_or(0);
             let eff_subgroup = subgroup_id.unwrap_or(0);
-            let stream_id = wt
-                .open_stream(self.webtransport_session_id.into(), h3, quic, false)
-                .unwrap()
-                .into();
+            let stream_id = match wt
+                .open_stream(self.webtransport_session_id.into(), h3, quic, false) {
+                    Ok(s) => s.into(),
+                    Err(wt::Error::InsufficientCapacity) => return Err(Error::InsufficientCapacity),
+                    Err(e) => unimplemented!("{:?}", e),
+                };
             self.out_tracks.get_mut(&track_alias).unwrap().current_stream_id = Some(stream_id);
             self.out_streams.insert(
                 stream_id,
@@ -691,6 +693,19 @@ impl MoqTransportSession {
             .get_mut(&track.current_stream_id.unwrap())
             .unwrap();
         stream.send_obj_pld(buf, wt, quic)
+    }
+
+    /// Reset the current outgoing stream for a track and clear it so the next send opens a fresh subgroup.
+    /// Use this when the stream is in a broken/partial state due to flow control or send errors.
+    pub fn reset_current_track_stream(
+        &mut self,
+        track_alias: TrackAlias,
+        quic: &mut quiche::Connection,
+    ) {
+        let Some(stream_id) = self.out_tracks[&track_alias].current_stream_id else { return };
+        quic.stream_shutdown(stream_id.into_u64(), Shutdown::Write, 0x1).ok(); // 0x1 = CANCELED
+        self.out_streams.remove(&stream_id);
+        self.out_tracks.get_mut(&track_alias).unwrap().current_stream_id = None;
     }
 
     /// Get a pending subscription request from the peer if available.
@@ -907,7 +922,15 @@ impl MoqTransportSession {
         let track = self.in_tracks.get_mut(&track_alias).unwrap();
         let stream_id = track.current_stream().unwrap();
         let stream = self.in_streams.get_mut(&stream_id).unwrap();
-        stream.read_obj_pld(quic, h3, wt, buf)
+        match stream.read_obj_pld(quic, h3, wt, buf) {
+            Err(Error::Fin) => {
+                self.in_streams.remove(&stream_id);
+                let track = self.in_tracks.get_mut(&track_alias).unwrap();
+                track.fin_stream(stream_id);
+                Err(Error::Fin)
+            }
+            other => other,
+        }
     }
 
     /// Cancel sending on stream with Delivery Timeout

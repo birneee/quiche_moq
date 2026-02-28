@@ -45,6 +45,9 @@ impl OutStream {
     }
 
     /// `object_id`: `None` to auto-increment; `Some(id)` to use explicit id (must be >= next expected).
+    ///
+    /// # Errors
+    /// - [`Error::UnfinishedPayload`]: called while the previous object's payload is still in progress.
     pub fn send_obj_hdr(
         &mut self,
         object_id: Option<u64>,
@@ -135,6 +138,10 @@ impl OutStream {
         }
     }
 
+    /// # Errors
+    /// - [`Error::ExceededPayload`]: `buf` is longer than the remaining object payload.
+    /// - [`Error::Done`]: send buffer full; retry with the same data.
+    /// - [`Error::InsufficientCapacity`]: QUIC stream capacity exhausted; retry later.
     pub fn send_obj_pld(
         &mut self,
         buf: &[u8],
@@ -146,10 +153,14 @@ impl OutStream {
                 panic!("no object header sent")
             }
             State::ObjectPayload { remaining_bytes, subgroup_ty } => {
-                assert!(*remaining_bytes >= buf.len());
+                if *remaining_bytes < buf.len() {
+                    return Err(Error::ExceededPayload);
+                }
                 let n = match wt.stream_send(self.stream_id.into(), quic, buf, false) {
                     Ok(v) => v,
                     Err(wt::Error::Done) => return Err(Error::Done),
+                    Err(wt::Error::InvalidStreamState(_)) => return Err(Error::Done),
+                    Err(wt::Error::InsufficientCapacity) => return Err(Error::InsufficientCapacity),
                     Err(e) => unimplemented!("{:?}", e),
                 };
                 *remaining_bytes -= n;

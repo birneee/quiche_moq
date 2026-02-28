@@ -113,16 +113,17 @@ impl Stream {
                 Ok(len)
             }
             Err(e) => match e {
-                quiche::Error::InvalidStreamState(_) => {
+                quiche::Error::InvalidStreamState(i) => {
                     if self.quic_finished {
                         debug!("wt stream {} finished", self.stream_id);
                         self.finished = true;
                         Err(Error::Fin)
                     } else {
-                        unimplemented!("{:?}", e)
+                        Err(Error::InvalidStreamState(i))
                     }
                 }
                 quiche::Error::Done => Err(Error::Done),
+                quiche::Error::StreamReset(i) => Err(Error::StreamReset(i)),
                 e => unimplemented!("{:?}", e),
             },
         }

@@ -210,6 +210,7 @@ impl MoqWebTransportHelper {
         'h3: loop {
             match h3_conn.poll(quic_conn) {
                 Ok((_, h3::Event::Headers { .. })) => unreachable!("unexpected h3 response"),
+                Ok((_, h3::Event::Reset(_))) => {},
                 Ok(e) => unimplemented!("{:?}", e),
                 Err(h3::Error::Done) => break 'h3,
                 Err(e) => unimplemented!("{:?}", e),

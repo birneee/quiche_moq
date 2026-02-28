@@ -16,6 +16,7 @@ pub enum Error {
     InsufficientCapacity,
     ObjectToLong,
     UnfinishedPayload,
+    ExceededPayload,
     /// Insufficient MAX_REQUEST_ID quota from peer
     RequestBlocked,
     Wire(quiche_moq_wire::Error),

@@ -186,6 +186,10 @@ fn post_handle_recvs_conn(mut moq: MoqHandle, args: &SubscribeArgs, state: &mut 
                 state.obj_hdr.as_ref().unwrap()
             }
             Err(moq::Error::Done) => return,
+            Err(moq::Error::Fin) => {
+                info!("track finished");
+                return;
+            }
             Err(e) => unimplemented!("{:?}", e),
         },
     };
@@ -200,6 +204,12 @@ fn post_handle_recvs_conn(mut moq: MoqHandle, args: &SubscribeArgs, state: &mut 
         let n = match moq.read_obj_pld(slice, track_alias) {
             Ok(v) => v,
             Err(moq::Error::Done) => return,
+            Err(moq::Error::Fin) => {
+                error!("stream finished prematurely, dropping object");
+                state.obj_hdr = None;
+                state.obj_buf.clear();
+                return;
+            }
             Err(e) => unimplemented!("{:?}", e),
         };
         unsafe { buf.advance_mut(n) }

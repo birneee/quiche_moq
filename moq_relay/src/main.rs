@@ -33,6 +33,14 @@ struct SubscriberInfo {
     track_alias: Option<TrackAlias>,
     /// Set when the publisher disconnects; triggers PUBLISH_DONE in Phase 4.6.
     publisher_gone: bool,
+    /// Location (group+object) of the most recent object header forwarded to this subscriber.
+    /// None before any header has been sent.
+    /// A value < Subscription::location means the subscriber is behind and needs a new header.
+    location: Option<Location>,
+    /// Bytes of the current object's payload still to be forwarded to this subscriber.
+    /// Offset into obj_buf = obj_payload_len - remaining.
+    /// 0 when fully forwarded or skipping this object (effectively read_pos = end of object).
+    remaining: usize,
 }
 
 impl SubscriberInfo {
@@ -53,16 +61,20 @@ struct Subscription {
     /// Publisher state; None when publisher has disconnected.
     publisher: Option<PublisherInfo>,
     subscribers: Vec<SubscriberInfo>,
-    /// Payload length of the object currently being relayed (0 = no object in progress).
+    /// Payload length of the current object (0 when no object received yet).
     obj_payload_len: usize,
-    /// Payload bytes already forwarded to subscribers for the current object.
-    obj_forwarded: usize,
-    /// Scratch buffer for reading payload from publisher.
+    /// Bytes written into obj_buf from the publisher for the current object.
+    write_pos: usize,
+    /// Buffer holding the full payload of the current object.
     obj_buf: Vec<u8>,
-    /// Group ID of the current object (from publisher's subgroup header).
-    obj_group_id: u64,
-    /// Object ID of the current object (from publisher's object header).
-    obj_object_id: u64,
+    /// Location (group+object) of the current object being buffered from the publisher.
+    /// None until the first object header is received.
+    location: Option<Location>,
+    /// Extension headers of the current object, forwarded to subscribers on the next object header.
+    ext_hdrs: KeyValuePairs,
+    /// Set when read_obj_pld returns Fin mid-object (publisher reset the subgroup stream).
+    /// Checked at the start of the next loop iteration before any forwarding occurs.
+    subgroup_canceled: bool,
 }
 
 impl Subscription {
@@ -118,6 +130,7 @@ fn main() {
                         })
                         .unwrap();
                     MoqWebTransportHelper::configure_quic(&mut c);
+                    c.set_max_idle_timeout(args.timeout);
                     c
                 };
                 c
@@ -135,8 +148,9 @@ fn main() {
         let url = Url::parse(relay_url).unwrap();
         let peer_addr = *url.socket_addrs(|| Some(443)).unwrap().first().unwrap();
         let mut quic_cfg = quiche::Config::new(quiche::PROTOCOL_VERSION).unwrap();
-        quic_cfg.verify_peer(false);
         MoqWebTransportHelper::configure_quic(&mut quic_cfg);
+        quic_cfg.verify_peer(false);
+        quic_cfg.set_max_idle_timeout(args.timeout);
         r.endpoint.connect(
             None, local_addr, peer_addr, &mut quic_cfg,
             ConnAppData {
@@ -281,78 +295,139 @@ fn post_handle_recvs(r: &mut Runner) {
         });
     }
 
-    // Phase 5: Forward object data from publishers to subscribers (streaming)
-    enum FwdStep { Hdr(usize, KeyValuePairs), Pld(usize), Stop, Fin }
+    // Phase 5: Forward object data from publishers to subscribers.
+    //
+    // obj_buf holds the payload of the current object as it arrives from the publisher.
+    // write_pos: bytes written into obj_buf so far by the publisher.
+    // Subscriber state (per-subscriber):
+    //   location: group+object of the most recent header sent to this subscriber (None = not started).
+    //   remaining: bytes of the current object's payload still to forward.
+    //              read_pos into obj_buf = obj_payload_len - remaining.
+    //              0 means fully forwarded or skipping this object (read_pos = end).
+    //
+    // Loop steps per iteration:
+    //   1. Cancel check: if the publisher's subgroup was reset mid-object, the partial payload
+    //      is incomplete. Discard it and reset streams for subscribers that had unforwarded data.
+    //   2. Forward: for each subscriber whose location is behind sub.location, send the current
+    //      object header first (resetting any unfinished previous stream), then forward
+    //      obj_buf[read_pos..write_pos].
+    //   3. Read: consume more payload or the next object header from the publisher.
+    //      Stores the new location and ext_hdrs in sub; subscribers pick them up in step 2.
+    //   4. Break when the publisher made no progress.
+    //
+    // The publisher is never blocked by slow subscribers. A subscriber that cannot receive
+    // right now retains its remaining count and catches up on later post_handle_recvs calls.
     let (conns, appdata) = &mut r.endpoint.mut_conns_and_app_data();
     for (nt, sub) in appdata.subscriptions.iter_mut() {
         let Some((pub_id, pub_ta)) = sub.publisher.as_ref().and_then(|p| p.track_alias.map(|ta| (p.client_id, ta))) else { continue };
         if !sub.has_accepted_subscribers() { continue; }
 
         loop {
-            // Read one step from publisher; release borrow before forwarding.
-            let step = if let Some(pub_conn) = conns.get_mut(pub_id) {
-                if let Some(mut moq) = pub_conn.app_data.moq_helper.moq_handle(&mut pub_conn.conn) {
-                    if sub.obj_payload_len == 0 {
-                        match moq.read_obj_hdr(pub_ta) {
-                            Ok(hdr) => {
-                                sub.obj_payload_len = hdr.payload_len();
-                                sub.obj_forwarded = 0;
-                                sub.obj_object_id = hdr.id();
-                                if let Some(sg) = moq.subgroup_header(pub_ta) {
-                                    sub.obj_group_id = sg.group_id();
-                                }
-                                FwdStep::Hdr(sub.obj_payload_len, hdr.extension_headers().clone())
-                            }
-                            Err(moq::Error::Done) => FwdStep::Stop,
-                            Err(moq::Error::Fin) => FwdStep::Fin,
-                            Err(e) => { error!("read obj hdr for {}: {:?}", nt, e); FwdStep::Stop }
-                        }
-                    } else {
-                        let remaining = sub.obj_payload_len - sub.obj_forwarded;
-                        sub.obj_buf.resize(remaining, 0);
-                        match moq.read_obj_pld(&mut sub.obj_buf, pub_ta) {
-                            Ok(n) => FwdStep::Pld(n),
-                            Err(moq::Error::Done) => FwdStep::Stop,
-                            Err(e) => { error!("read obj pld for {}: {:?}", nt, e); FwdStep::Stop }
-                        }
+            // Step 1: If the publisher's subgroup stream was reset mid-object, the partial payload
+            // is incomplete. Clear the buffer and reset streams for subscribers that still had
+            // unforwarded data. Those subscribers keep their location = sub.location so they
+            // appear "done" with this canceled object and will receive the next header normally.
+            if sub.subgroup_canceled {
+                sub.subgroup_canceled = false;
+                sub.write_pos = 0;
+                sub.obj_payload_len = 0;
+                for s in sub.subscribers.iter_mut() {
+                    if s.location != sub.location || s.remaining == 0 { continue; }
+                    let Some(sub_ta) = s.track_alias else { s.remaining = 0; continue };
+                    if let Some(sub_conn) = conns.get_mut(s.client_id)
+                        && let Some(mut moq) = sub_conn.app_data.moq_helper.moq_handle(&mut sub_conn.conn)
+                    {
+                        moq.reset_current_track_stream(sub_ta);
                     }
-                } else { FwdStep::Stop }
-            } else { FwdStep::Stop };
+                    s.remaining = 0;
+                }
+            }
 
-            // Forward to subscribers (publisher borrow released above).
-            match step {
-                FwdStep::Fin => {
-                    info!("publisher done for {}", nt);
-                    sub.publisher = None;
-                    for s in &mut sub.subscribers { s.publisher_gone = true; }
-                    break;
-                }
-                FwdStep::Stop => break,
-                FwdStep::Hdr(len, ext_hdrs) => {
-                    for s in &sub.subscribers {
-                        let Some(sub_ta) = s.track_alias else { continue };
-                        if let Some(sub_conn) = conns.get_mut(s.client_id)
-                            && let Some(mut moq) = sub_conn.app_data.moq_helper.moq_handle(&mut sub_conn.conn)
-                                && let Err(e) = moq.send_obj_hdr_with(Some(sub.obj_group_id), None, Some(sub.obj_object_id), len, &ext_hdrs, sub_ta) {
-                                    error!("send obj hdr to subscriber {} for {}: {:?}", s.client_id, nt, e);
+            // Step 2: Forward to each subscriber.
+            // If the subscriber's location is behind sub.location (or None), send the current
+            // object header first, resetting the stream if there was unforwarded data.
+            // Then forward obj_buf[read_pos..write_pos] where read_pos = obj_payload_len - remaining.
+            if let Some(sub_loc) = sub.location {
+                for s in sub.subscribers.iter_mut() {
+                    let need_header = s.location.is_none_or(|loc| loc < sub_loc);
+                    let Some(sub_ta) = s.track_alias else { continue };
+                    if let Some(sub_conn) = conns.get_mut(s.client_id)
+                        && let Some(mut moq) = sub_conn.app_data.moq_helper.moq_handle(&mut sub_conn.conn)
+                    {
+                        if need_header {
+                            if s.remaining != 0 {
+                                moq.reset_current_track_stream(sub_ta);
+                                s.remaining = 0;
+                            }
+                            match moq.send_obj_hdr_with(Some(sub_loc.group), None, Some(sub_loc.object), sub.obj_payload_len, &sub.ext_hdrs, sub_ta) {
+                                Ok(()) => {
+                                    s.location = Some(sub_loc);
+                                    s.remaining = sub.obj_payload_len;
                                 }
-                    }
-                }
-                FwdStep::Pld(n) => {
-                    sub.obj_forwarded += n;
-                    for s in &sub.subscribers {
-                        let Some(sub_ta) = s.track_alias else { continue };
-                        if let Some(sub_conn) = conns.get_mut(s.client_id)
-                            && let Some(mut moq) = sub_conn.app_data.moq_helper.moq_handle(&mut sub_conn.conn)
-                                && let Err(e) = moq.send_obj_pld(&sub.obj_buf[..n], sub_ta) {
-                                    error!("send obj pld to subscriber {} for {}: {:?}", s.client_id, nt, e);
-                                }
-                    }
-                    if sub.obj_forwarded >= sub.obj_payload_len {
-                        sub.obj_payload_len = 0;
+                                Err(moq::Error::InsufficientCapacity) => continue,
+                                Err(e) => unimplemented!("{:?}", e),
+                            }
+                        }
+                        let read_pos = sub.obj_payload_len - s.remaining;
+                        if read_pos >= sub.write_pos { continue; }
+                        match moq.send_obj_pld(&sub.obj_buf[read_pos..sub.write_pos], sub_ta) {
+                            Ok(n) => { s.remaining -= n; }
+                            Err(moq::Error::Done | moq::Error::InsufficientCapacity) => {}
+                            Err(e) => unimplemented!("{:?}", e),
+                        }
                     }
                 }
             }
+
+            // Step 3: Consume data from the publisher — more payload or the next object header.
+            // write_pos < obj_payload_len  → read more payload.
+            // write_pos >= obj_payload_len → object complete (or none yet); read next header.
+            // On new header: location, obj_payload_len, write_pos, obj_buf, and ext_hdrs are updated.
+            // Subscribers will detect the new location in step 2 of the next iteration.
+            let mut pub_progress = false;
+            let mut publisher_fin = false;
+            if let Some(pub_conn) = conns.get_mut(pub_id)
+                && let Some(mut moq) = pub_conn.app_data.moq_helper.moq_handle(&mut pub_conn.conn)
+            {
+                if sub.write_pos < sub.obj_payload_len {
+                    match moq.read_obj_pld(&mut sub.obj_buf[sub.write_pos..], pub_ta) {
+                        Ok(n) => { sub.write_pos += n; pub_progress = true; }
+                        Err(moq::Error::Done) => {}
+                        Err(moq::Error::Fin) => {
+                            error!("publisher subgroup reset mid-object for {}", nt);
+                            sub.subgroup_canceled = true;
+                            pub_progress = true; // step 1 runs next iteration
+                        }
+                        Err(e) => { error!("read obj pld for {}: {:?}", nt, e); publisher_fin = true; }
+                    }
+                } else {
+                    match moq.read_obj_hdr(pub_ta) {
+                        Ok(hdr) => {
+                            let group = moq.subgroup_header(pub_ta)
+                                .map_or_else(|| sub.location.map_or(0, |l| l.group), |sg| sg.group_id());
+                            sub.location = Some(Location { group, object: hdr.id() });
+                            sub.obj_payload_len = hdr.payload_len();
+                            sub.write_pos = 0;
+                            sub.obj_buf.resize(hdr.payload_len(), 0);
+                            sub.ext_hdrs = hdr.extension_headers().clone();
+                            pub_progress = true;
+                        }
+                        Err(moq::Error::Done) => {}
+                        Err(moq::Error::Fin) => { publisher_fin = true; }
+                        Err(e) => { error!("read obj hdr for {}: {:?}", nt, e); publisher_fin = true; }
+                    }
+                }
+            }
+
+            if publisher_fin {
+                info!("publisher done for {}", nt);
+                sub.publisher = None;
+                for s in &mut sub.subscribers { s.publisher_gone = true; }
+                break;
+            }
+
+            // Step 4: Continue only while the publisher makes progress.
+            if !pub_progress { break; }
         }
     }
 }
@@ -392,16 +467,17 @@ fn post_handle_recvs_conn(
                     }),
                     subscribers: Vec::new(),
                     obj_payload_len: 0,
-                    obj_forwarded: 0,
+                    write_pos: 0,
                     obj_buf: Vec::new(),
-                    obj_group_id: 0,
-                    obj_object_id: 0,
+                    location: None,
+                    ext_hdrs: KeyValuePairs::new(),
+                    subgroup_canceled: false,
                 }
             });
             if !sub.is_publisher_accepted() {
                 info!("queued subscriber {} for {} (awaiting publisher accept)", cid, nt);
             }
-            sub.subscribers.push(SubscriberInfo { client_id: cid, request_id: *request_id, track_alias: None, publisher_gone: false });
+            sub.subscribers.push(SubscriberInfo { client_id: cid, request_id: *request_id, track_alias: None, publisher_gone: false, location: None, remaining: 0 });
             SubscriptionRequestAction::Keep
         } else {
             info!("reject subscription {} from {} (no publisher)", nt, cid);

@@ -3,7 +3,7 @@ use octets::{Octets, OctetsMut};
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
-use web_sys::{Document, HtmlVideoElement, ReadableStreamDefaultReader, WebTransport, WebTransportBidirectionalStream, Window};
+use web_sys::{Document, HtmlVideoElement, ReadableStreamDefaultReader, WebTransport, Window};
 use web_sys::js_sys::{Object, Reflect, Uint8Array};
 use quiche_moq_wire::control_message::{ClientSetupMessage, ControlMessageEnum};
 use quiche_moq_wire::{FromBytes, SetupParameters, ToBytes, MOQ_VERSION_DRAFT_13};
@@ -26,7 +26,6 @@ pub async fn start() -> Result<(), JsValue> {
     info!("ready");
     let s = JsFuture::from(wt.create_bidirectional_stream()).await?;
     info!("create bidirectional stream");
-    let s: WebTransportBidirectionalStream = s.into();
     let w = s.writable();
     let w = w.get_writer()?;
 

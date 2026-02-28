@@ -61,7 +61,9 @@ impl InStream {
                     self.readable = false;
                     return Ok(());
                 }
-                Err(quiche_webtransport::Error::Fin) => {
+                Err(quiche_webtransport::Error::Fin)
+                | Err(quiche_webtransport::Error::StreamReset(_))
+                | Err(quiche_webtransport::Error::InvalidStreamState(_)) => {
                     self.readable = false;
                     self.wt_fin = true;
                     return Ok(());
@@ -119,7 +121,9 @@ impl InStream {
                     }) {
                         Ok(_) => {}
                         Err(quiche_webtransport::Error::Done) => return Err(Error::Done),
-                        Err(quiche_webtransport::Error::Fin) => return Err(Error::Fin),
+                        Err(quiche_webtransport::Error::Fin)
+                        | Err(quiche_webtransport::Error::StreamReset(_))
+                        | Err(quiche_webtransport::Error::InvalidStreamState(_)) => return Err(Error::Fin),
                         Err(e) => unimplemented!("{:?}", e),
                     };
                     continue;
@@ -192,6 +196,9 @@ impl InStream {
         ) {
             Ok(v) => v,
             Err(quiche_webtransport::Error::Done) => return Err(Error::Done),
+            Err(quiche_webtransport::Error::Fin)
+            | Err(quiche_webtransport::Error::StreamReset(_))
+            | Err(quiche_webtransport::Error::InvalidStreamState(_)) => return Err(Error::Fin),
             Err(e) => unimplemented!("{:?}", e),
         };
         self.remaining_object_payload -= n;
