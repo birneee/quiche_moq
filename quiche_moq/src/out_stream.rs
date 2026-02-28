@@ -110,8 +110,11 @@ impl OutStream {
                     let mut o = OctetsMut::with_slice(&mut b);
                     object_header.to_bytes(&mut o, self.version)?;
                     let len = o.off();
-                    wt.stream_send_if_capacity(self.stream_id.into(), quic, &b[..len], false)
-                        .unwrap();
+                    match wt.stream_send_if_capacity(self.stream_id.into(), quic, &b[..len], false) {
+                        Ok(_) => {}
+                        Err(wt::Error::InsufficientCapacity) => return Err(Error::InsufficientCapacity),
+                        Err(e) => unimplemented!("{:?}", e),
+                    }
                     trace!("sent {:?} on stream {}", object_header, self.stream_id);
                     #[cfg(feature = "qlog")]
                     if let Some(qlog) = quic.qlog_streamer() {
