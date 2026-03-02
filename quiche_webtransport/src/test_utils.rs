@@ -1,14 +1,14 @@
-use std::sync::OnceLock;
 use boring::asn1::Asn1Time;
 use boring::hash::MessageDigest;
 use boring::pkey::{PKey, Private};
 use boring::rsa::Rsa;
 use boring::ssl::{SslContextBuilder, SslMethod};
-use boring::x509::{X509NameBuilder, X509};
 use boring::x509::extension::SubjectAlternativeName;
+use boring::x509::{X509, X509NameBuilder};
 use quiche::test_utils::Pipe;
-use quiche::{h3, Config, PROTOCOL_VERSION};
+use quiche::{Config, PROTOCOL_VERSION, h3};
 use quiche_h3_utils::ALPN_HTTP_3;
+use std::sync::OnceLock;
 
 /// generate private and public key pair for testing
 pub fn key_pair() -> &'static (PKey<Private>, X509) {
@@ -19,14 +19,20 @@ pub fn key_pair() -> &'static (PKey<Private>, X509) {
 
         // Build X.509 certificate
         let mut name_builder = X509NameBuilder::new().unwrap();
-        name_builder.append_entry_by_text("CN", "localhost").unwrap();
+        name_builder
+            .append_entry_by_text("CN", "localhost")
+            .unwrap();
 
         let mut builder = X509::builder().unwrap();
         builder.set_version(2).unwrap();
         builder.set_pubkey(&pkey).unwrap();
 
-        builder.set_not_before(Asn1Time::days_from_now(0).unwrap().as_ref()).unwrap();
-        builder.set_not_after(Asn1Time::days_from_now(365).unwrap().as_ref()).unwrap();
+        builder
+            .set_not_before(Asn1Time::days_from_now(0).unwrap().as_ref())
+            .unwrap();
+        builder
+            .set_not_after(Asn1Time::days_from_now(365).unwrap().as_ref())
+            .unwrap();
 
         let san = SubjectAlternativeName::new()
             .dns("localhost")
@@ -56,7 +62,8 @@ pub fn _init_webtransport_pipe() -> (
             b.set_private_key(key).unwrap();
             b.set_certificate(cert).unwrap();
             b
-        }).unwrap();
+        })
+        .unwrap();
         c.set_initial_max_streams_uni(5);
         c.set_initial_max_streams_bidi(2);
         c.set_initial_max_data(10000000);
@@ -67,7 +74,7 @@ pub fn _init_webtransport_pipe() -> (
         c.verify_peer(false);
         c
     })
-        .unwrap();
+    .unwrap();
 
     pipe.handshake().unwrap();
 
@@ -79,7 +86,7 @@ pub fn _init_webtransport_pipe() -> (
         crate::configure_h3(&mut c).unwrap();
         c
     })
-        .unwrap();
+    .unwrap();
 
     assert!(pipe.server.is_established());
     assert_eq!(pipe.server.application_proto(), ALPN_HTTP_3);
@@ -89,7 +96,7 @@ pub fn _init_webtransport_pipe() -> (
         crate::configure_h3(&mut c).unwrap();
         c
     })
-        .unwrap();
+    .unwrap();
 
     pipe.advance().unwrap();
 
