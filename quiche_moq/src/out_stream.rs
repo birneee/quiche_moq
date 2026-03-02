@@ -95,13 +95,10 @@ impl OutStream {
                 State::ObjectHeader { subgroup_ty } => {
                     let object_id = match object_id {
                         None => {
-                            let id = self.next_object_id;
-                            self.next_object_id += 1;
-                            id
+                            self.next_object_id
                         }
                         Some(id) => {
                             assert!(id >= self.next_object_id, "object_id {id} < next expected {}", self.next_object_id);
-                            self.next_object_id = id + 1;
                             id
                         }
                     };
@@ -115,6 +112,7 @@ impl OutStream {
                         Err(wt::Error::InsufficientCapacity) => return Err(Error::InsufficientCapacity),
                         Err(e) => unimplemented!("{:?}", e),
                     }
+                    self.next_object_id = object_id + 1; // increment here because object_id was actually used
                     trace!("sent {:?} on stream {}", object_header, self.stream_id);
                     #[cfg(feature = "qlog")]
                     if let Some(qlog) = quic.qlog_streamer() {
