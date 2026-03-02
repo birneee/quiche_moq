@@ -52,9 +52,9 @@
               cargoLock = {
                 lockFile = ./Cargo.lock;
                 outputHashes = {
-                  "octets-0.3.4" = "sha256-s8arMNx469KgQT4llFOxXW/OVTeqPH/235yml9skuLY=";
-                  "quiche_endpoint-0.1.0" = "sha256-AZaGGZwGiPueFVmuaquBFNt+CLDNFn0M1eyiISLKqeo=";
-                  "quiche_mio_runner-0.1.0" = "sha256-y08aR5qdWhJMYcUc+Xq/Zov7NxBTX2YPXvjwOhpaj5o=";
+                  "octets-0.3.5" = "sha256-zDY1+mAclvhAy5/cOiILVXqOaYspmmyCXnaVL8V9+Ok=";
+                  "quiche_endpoint-0.1.0" = "sha256-8pI2v5MCl0LmSKdarh6eHymnHlvSKbvqzS8H455fjqM=";
+                  "quiche_mio_runner-0.1.0" = "sha256-TSXCWXlGC0/0smxUdMZ8P9J654GEAT7zHjnStNx12eE=";
                 };
               };
               src = pkgs.lib.cleanSource ./.;

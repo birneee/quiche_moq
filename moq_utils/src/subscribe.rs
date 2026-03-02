@@ -37,7 +37,15 @@ type Runner = runner::Runner<ConnAppData, (), ()>;
 
 #[allow(clippy::field_reassign_with_default)]
 pub(crate) fn run_subscribe(args: &SubscribeArgs) {
-    let mut endpoint = Endpoint::new(None, EndpointConfig::default(), ());
+    let mut endpoint = Endpoint::new(
+        None, 
+        {
+            let mut c = EndpointConfig::default();
+            c.setup_qlog = quiche_endpoint_utils::setup_qlog;
+            c
+        }, 
+        ()
+    );
 
     let socket = Socket::bind("0.0.0.0:0").unwrap();
 

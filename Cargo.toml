@@ -13,6 +13,7 @@ members = [
     "quiche_utils",
     "quiche_webtransport",
     "short_buf",
+    "quiche_endpoint_utils",
 ]
 resolver = "2"
 
@@ -26,8 +27,8 @@ log = "0.4.28"
 mio = "1.0"
 mp4 = "0.14.0"
 octets = "0.3"
-quiche = { version = "0.24"}
-qlog = { version = "0.15" }
+quiche = { version = "0.26"}
+qlog = { version = "0.16" }
 quiche_h3_utils = { path="quiche_h3_utils" }
 #quiche_mio_runner = { path="../quiche_mio_runner" }
 quiche_mio_runner = { git = "https://github.com/birneee/quiche_mio_runner" }
@@ -43,11 +44,12 @@ serde_json = "1"
 quiche_moq_webtransport_helper = { path="quiche_moq_webtransport_helper" }
 quiche_moq_macros = { path="quiche_moq_macros" }
 http_capsule = { path = "http_capsule" }
+quiche_endpoint_utils = { path="quiche_endpoint_utils" }
 
 [patch.crates-io]
-quiche = { git="https://github.com/birneee/quiche", branch = "webtransport_streams" }
-octets = { git="https://github.com/birneee/quiche", branch = "webtransport_streams" }
-qlog = { git="https://github.com/birneee/quiche", branch = "webtransport_streams" }
+quiche = { git="https://github.com/birneee/quiche", branch = "webtransport_streams_and_qlog_reference_time" }
+octets = { git="https://github.com/birneee/quiche", branch = "webtransport_streams_and_qlog_reference_time" }
+qlog = { git="https://github.com/birneee/quiche", branch = "webtransport_streams_and_qlog_reference_time" }
 
 [patch."https://github.com/birneee/quiche_endpoint"]
 #quiche_endpoint = { path = "../quiche_endpoint" }

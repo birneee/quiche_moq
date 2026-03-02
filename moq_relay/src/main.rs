@@ -135,7 +135,11 @@ fn main() {
                 };
                 c
             }),
-            EndpointConfig::default(),
+            {
+                let mut c = EndpointConfig::default();
+                c.setup_qlog = quiche_endpoint_utils::setup_qlog;
+                c
+            },
             AppData {
                 namespaces: Default::default(),
                 subscriptions: Default::default(),

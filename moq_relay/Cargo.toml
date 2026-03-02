@@ -14,3 +14,4 @@ quiche_utils = { workspace = true }
 quiche_webtransport = { workspace = true }
 clap = { workspace = true }
 url = { workspace = true }
+quiche_endpoint_utils = { workspace = true }

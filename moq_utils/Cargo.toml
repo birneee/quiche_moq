@@ -17,3 +17,4 @@ quiche_h3_utils = { workspace = true }
 mio = { workspace = true, features = ["os-ext"] }
 libc = "0.2"
 partial-borrow = "1.0.1"
+quiche_endpoint_utils = { workspace = true }

@@ -1,0 +1,7 @@
+[package]
+name = "quiche_endpoint_utils"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+quiche_mio_runner = { workspace = true }
