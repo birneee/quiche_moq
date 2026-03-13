@@ -39,6 +39,8 @@ $ RUST_LOG=info cargo run -p time-client
   - [x] draft 12
   - [x] draft 13
   - [ ] draft 14
+  - [ ] draft 15
+  - [x] draft 16
 - [x] MoQ via WebTransport
 - [ ] MoQ via QUIC
 - [x] subscribe
@@ -50,6 +52,8 @@ $ RUST_LOG=info cargo run -p time-client
 - [ ] track status
 - [x] streams
 - [ ] datagrams
+- [x] relay
+- [x] object extension headers
 - [ ] [qlog](https://datatracker.ietf.org/doc/draft-pardue-moq-qlog-moq-events/05/)
   - [x] control_message_created
   - [x] control_message_parsed

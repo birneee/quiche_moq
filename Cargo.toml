@@ -30,7 +30,6 @@ octets = "0.3"
 quiche = { version = "0.26"}
 qlog = { version = "0.16" }
 quiche_h3_utils = { path="quiche_h3_utils" }
-#quiche_mio_runner = { path="../quiche_mio_runner" }
 quiche_mio_runner = { git = "https://github.com/birneee/quiche_mio_runner" }
 quiche_moq = { path="quiche_moq" }
 quiche_moq_wire = { path="quiche_moq_wire" }
@@ -50,6 +49,3 @@ quiche_endpoint_utils = { path="quiche_endpoint_utils" }
 quiche = { git="https://github.com/birneee/quiche", branch = "webtransport_streams_and_qlog_reference_time" }
 octets = { git="https://github.com/birneee/quiche", branch = "webtransport_streams_and_qlog_reference_time" }
 qlog = { git="https://github.com/birneee/quiche", branch = "webtransport_streams_and_qlog_reference_time" }
-
-[patch."https://github.com/birneee/quiche_endpoint"]
-#quiche_endpoint = { path = "../quiche_endpoint" }
