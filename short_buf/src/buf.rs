@@ -69,7 +69,9 @@ impl<const N: usize> ShortBuf<N> {
                 self.end = len;
             }
         }
-        let len = func(&mut self.buf[self.end..])?;
+        let space = &mut self.buf[self.end..];
+        assert!(!space.is_empty(), "ShortBuf::fill called with no space — buffer too small for the data being parsed");
+        let len = func(space)?;
         self.end += len;
         Ok(())
     }
@@ -176,14 +178,15 @@ mod test {
     }
 
     #[test]
+    #[should_panic(expected = "ShortBuf::fill called with no space")]
     fn overfill() {
         let data: [u8; 3] = [1, 2, 3];
         let mut inner = Cursor::new(data);
         let mut sb = ShortBuf::<3>::new();
         sb.fill(|b| inner.read(b)).unwrap();
         assert_eq!(sb.buffer(), &data);
+        // Buffer is full and nothing has been consumed: N was too small for the data.
         sb.fill(|b| inner.read(b)).unwrap();
-        assert_eq!(sb.buffer(), &data);
     }
 
     #[test]

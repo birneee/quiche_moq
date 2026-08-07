@@ -1,4 +1,5 @@
 use std::io::Write;
+use quiche_moq::wire::control_message::subscribe::FilterType;
 use std::thread;
 use boring::ssl::{SslContextBuilder, SslMethod};
 use boring::x509::store::X509StoreBuilder;
@@ -11,6 +12,7 @@ use quiche_mio_runner::{mio, Socket};
 use crate::MoqWebTransportHelper;
 use quiche_moq as moq;
 use quiche_moq::wire::{RequestId, TrackAlias};
+use quiche_moq::SubscriptionRequestAction;
 
 /// for client and server
 fn quic_config() -> (quiche::Config, quiche::Config) {
@@ -72,7 +74,7 @@ fn handshake() {
                         };
                         if !conn.app_data.subscribed {
                             let name = "meeting--video".parse().unwrap();
-                            conn.app_data.request_id = Some(moq.subscribe(&name).unwrap());
+                            conn.app_data.request_id = Some(moq.subscribe(&name, None, None, FilterType::NextGroupStart).unwrap());
                             info!("subscribe {}", name);
                             conn.app_data.subscribed = true;
                         }
@@ -82,7 +84,10 @@ fn handshake() {
                         if let Some(track_alias) = conn.app_data.track_alias {
                             let hdr = match moq.read_obj_hdr(track_alias) {
                                 Ok(v) => v,
-                                Err(quiche_moq::Error::Done) => continue,
+                                Err(quiche_moq::Error::Done) => {
+                                    moq.post_handle();
+                                    continue;
+                                },
                                 Err(e) => unimplemented!("{:?}", e),
                             };
                             let mut buf = [0u8; 100];
@@ -90,7 +95,10 @@ fn handshake() {
                             assert_eq!(n, hdr.payload_len());
                             info!("recv obj: {}", str::from_utf8(&buf[..n]).unwrap());
                             conn.app_data.recv_obj_count += 1;
+                            moq.post_handle();
                             r.close()
+                        } else {
+                            moq.post_handle();
                         }
                     }
                 };
@@ -115,7 +123,6 @@ fn handshake() {
                 );
                 e
             },
-            None,
         );
         r.register_socket(socket);
         r.run();
@@ -138,16 +145,21 @@ fn handshake() {
                             continue 'conn;
                         };
 
-                        while let Some((request_id, subscription)) = moq.subscription_inbox_next() {
+                        let mut accepted: Vec<TrackAlias> = Vec::new();
+                        moq.process_subscription_requests(|_request_id, subscription, track_alias| {
                             if subscription.namespace_trackname != "meeting--video".parse().unwrap() {
                                 unreachable!()
                             }
                             info!("accept track {}", subscription.namespace_trackname);
-                            let track_alias = moq.accept_subscription(*request_id, None);
+                            accepted.push(track_alias);
+                            SubscriptionRequestAction::Accept
+                        });
+                        for track_alias in accepted {
                             let buf = b"hello";
                             moq.send_obj(buf, track_alias).unwrap();
-                            info!("send obj: {}", str::from_utf8(buf).unwrap())
+                            info!("send obj: {}", str::from_utf8(buf).unwrap());
                         }
+                        moq.post_handle();
                     }
                 };
                 c
@@ -164,9 +176,9 @@ fn handshake() {
                 }), EndpointConfig::default(), ());
                 e
             },
-            Some(&mut close_pipe_rx),
         );
         r.register_socket(server_socket);
+        r.registry().register_close(&mut close_pipe_rx);
         r.run();
     });
     let recv_obj_count = cj.join().unwrap();

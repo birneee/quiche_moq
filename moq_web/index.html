@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MoQ Web Player</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #111;
+      color: #eee;
+      font-family: system-ui, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      gap: 12px;
+    }
+    canvas {
+      max-width: 100%;
+      max-height: 85vh;
+      background: #000;
+    }
+    #status {
+      font-size: 13px;
+      color: #aaa;
+    }
+    #error {
+      font-size: 13px;
+      color: #f66;
+      white-space: pre-wrap;
+      max-width: 80ch;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="canvas" width="1280" height="720"></canvas>
+  <button id="unmute">🔇 Unmute</button>
+  <div id="status">Connecting…</div>
+  <div id="error"></div>
+
+  <script type="module">
+    import init, { MoqSession, unmute } from './moq_web.js';
+
+    const canvas   = document.getElementById('canvas');
+    const status   = document.getElementById('status');
+    const errEl    = document.getElementById('error');
+    const unmuteEl = document.getElementById('unmute');
+
+    const params = new URLSearchParams(location.search);
+    const relay  = params.get('relay') ?? 'https://127.0.0.1:443';
+    const video  = params.get('video') ?? 'tos--video';
+    const audio  = params.get('audio') ?? 'tos--audio';
+    // Pins the negotiated MoQ draft version, e.g. ?draft=18 or ?draft=draft18.
+    // Omit to keep the library default (auto-negotiates the highest mutually
+    // supported version). See moq_cli's --setup-version for the same knob
+    // outside the browser.
+    const draft  = params.get('draft') ?? '';
+
+    await init();
+
+    async function play() {
+      status.textContent = `Connecting to ${relay}…`;
+      const session = await MoqSession.connect(relay, draft);
+
+      // Both requested together — each subscribe() call is independent, so
+      // audio's request goes out without waiting for video's response.
+      const [videoTrack, audioTrack] = await Promise.all([
+        session.subscribe(video),
+        session.subscribe(audio),
+      ]);
+      videoTrack.render_video(canvas);
+      audioTrack.render_audio();
+
+      // Audio is not scheduled until "Unmute" is clicked, since browsers
+      // require a user gesture for audible audio.
+      status.textContent = 'Playing';
+    }
+
+    play().catch(e => {
+      status.textContent = 'Error';
+      errEl.textContent  = String(e);
+      console.error(e);
+    });
+
+    unmuteEl.addEventListener('click', () => {
+      unmute();
+      unmuteEl.textContent = '🔊 Unmuted';
+      unmuteEl.disabled = true;
+    }, { once: true });
+  </script>
+</body>
+</html>

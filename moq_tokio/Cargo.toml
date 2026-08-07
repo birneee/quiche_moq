@@ -1,0 +1,20 @@
+[package]
+name = "moq_tokio"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+moq_core = { workspace = true }
+moq_core_async = { workspace = true }
+moq_object_cache = { workspace = true }
+quiche_webtransport = { workspace = true }
+quiche = { workspace = true }
+tokio = { workspace = true }
+tokio-quiche = { workspace = true }
+tokio-stream = "0.1"
+url = { workspace = true }
+log = { workspace = true }
+rcgen = { workspace = true }
+
+[dev-dependencies]
+env_logger = { workspace = true }

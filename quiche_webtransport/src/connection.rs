@@ -1,6 +1,7 @@
 use crate::error::Result;
 use crate::pending_request::PendingRequest;
 use crate::pending_response::PendingResponse;
+use crate::protocol_negotiation::{encode_string_item, encode_string_list, parse_string_item, parse_string_list};
 use crate::session::Session;
 use crate::stream::Stream;
 use crate::{Error, SessionId, PROTOCOL_HEADER_WEBTRANSPORT, WT_CLOSE_SESSION};
@@ -53,15 +54,21 @@ impl Connection {
     }
 
     /// Sends a CONNECT request for a new WebTransport session.
+    ///
+    /// `available_protocols`, if non-empty, is sent as a `WT-Available-Protocols`
+    /// header (draft-ietf-webtrans-http3 §3.3), most-preferred first. Read back
+    /// the server's choice, once established, via `Connection::negotiated_protocol`.
+    ///
     /// Returns session id.
-    pub fn connect_session(
+    pub fn connect_session<F: quiche::BufFactory>(
         &mut self,
         h3: &mut h3::Connection,
-        quic: &mut quiche::Connection,
+        quic: &mut quiche::Connection<F>,
         url: Url,
+        available_protocols: &[String],
     ) -> SessionId {
         let Perspective::Client { pending_requests } = &mut self.perspective else { panic!("Perspective is not client") };
-        let hdrs = vec![
+        let mut hdrs = vec![
                 h3::Header::new(b":method", METHOD_CONNECT),
                 h3::Header::new(b":protocol", PROTOCOL_HEADER_WEBTRANSPORT),
                 h3::Header::new(b":scheme", url.scheme().as_bytes()),
@@ -69,15 +76,18 @@ impl Connection {
                 h3::Header::new(b":path", url.path().as_bytes()),
                 h3::Header::new(b"sec-webtransport-http3-draft02", b"1"), // this is outdated
         ];
+        if !available_protocols.is_empty() {
+            hdrs.push(h3::Header::new(b"wt-available-protocols", &encode_string_list(available_protocols)));
+        }
         trace!("send {:?}", hdrs_to_strings(&hdrs));
         let session_id = h3.send_request(quic, &hdrs, false).unwrap();
         pending_requests
-            .insert(session_id, PendingRequest::new());
+            .insert(session_id, PendingRequest::new(available_protocols.to_vec()));
         session_id
     }
 
     /// Processes WebTransport data from HTTP/3.
-    pub fn poll(&mut self, h3: &mut h3::Connection, quic: &mut quiche::Connection) {
+    pub fn poll<F: quiche::BufFactory>(&mut self, h3: &mut h3::Connection, quic: &mut quiche::Connection<F>) {
         // garbage collect finished streams
         self.streams.retain(|stream_id, stream| {
             if stream.finished() {
@@ -108,16 +118,16 @@ impl Connection {
         }
         if let Perspective::Server { pending_responds } = &mut self.perspective {
             pending_responds.retain(|_, resp| {
-                h3.send_response(
-                    quic,
-                    resp.session_id(),
-                    &[
-                        h3::Header::new(b":status", b"200"),
-                        h3::Header::new(b"sec-webtransport-http3-draft", b"draft02"),
-                    ],
-                    false,
-                )
-                    .unwrap();
+                let mut hdrs = vec![
+                    h3::Header::new(b":status", b"200"),
+                    h3::Header::new(b"sec-webtransport-http3-draft", b"draft02"),
+                ];
+                let protocol_hdr;
+                if let Some(protocol) = resp.response_protocol() {
+                    protocol_hdr = encode_string_item(protocol);
+                    hdrs.push(h3::Header::new(b"wt-protocol", &protocol_hdr));
+                }
+                h3.send_response(quic, resp.session_id(), &hdrs, false).unwrap();
                 false
             });
         }
@@ -147,17 +157,28 @@ impl Connection {
         readable
     }
 
-    pub fn open_stream(
+    /// Open a new WebTransport stream.
+    ///
+    /// Returns [`Error::InsufficientCapacity`] in three distinct cases:
+    /// - `h3::Error::StreamBlocked`: the QUIC MAX_STREAMS limit has been reached; the remote
+    ///   must extend the limit before a new stream can be opened.
+    /// - `h3::Error::Done`: the QUIC send buffer is transiently full (flow control backpressure);
+    ///   retrying on the next send opportunity will succeed once the buffer drains.
+    /// - `h3::Error::TransportError(quiche::Error::StreamLimit)`: same as `StreamBlocked` but
+    ///   surfaced through the transport-error path instead of h3's own bookkeeping; also
+    ///   transient, resolved once the remote sends a MAX_STREAMS update.
+    pub fn open_stream<F: quiche::BufFactory>(
         &mut self,
         session_id: u64,
         h3_conn: &mut h3::Connection,
-        quic_conn: &mut quiche::Connection,
+        quic_conn: &mut quiche::Connection<F>,
         bidi: bool,
     ) -> Result<u64> {
         assert!(self.sessions.contains_key(&session_id));
         let stream_id = match h3_conn.open_webtransport_stream(quic_conn, bidi) {
             Ok(v) => v,
             Err(h3::Error::Done | h3::Error::StreamBlocked) => return Err(Error::InsufficientCapacity),
+            Err(h3::Error::TransportError(quiche::Error::StreamLimit)) => return Err(Error::InsufficientCapacity),
             Err(e) => unimplemented!("{:?}", e),
         };
         self.streams
@@ -170,12 +191,12 @@ impl Connection {
     /// returns None if the stream is not ready for the application to consume
     /// returns the session_id when the stream is ready
     /// stream data must start after the h3 stream type.
-    pub fn recv_stream(
+    pub fn recv_stream<F: quiche::BufFactory>(
         &mut self,
         stream_id: u64,
         session_id: u64,
         h3: &mut h3::Connection,
-        quic: &mut quiche::Connection,
+        quic: &mut quiche::Connection<F>,
         b: &mut [u8],
     ) -> crate::error::Result<usize> {
         let stream = self
@@ -202,6 +223,8 @@ impl Connection {
         let mut wt_draft_supported = false;
         let mut wt_draft_selected = false;
         let mut protocol_webtransport = false;
+        let mut available_protocols: Vec<String> = vec![];
+        let mut selected_protocol: Option<String> = None;
         for header in headers {
             match (header.name(), header.value()) {
                 (b":status", s) => status = Some(<[u8; 3]>::try_from(s).unwrap()),
@@ -209,6 +232,8 @@ impl Connection {
                 (b":protocol", b"webtransport") => protocol_webtransport = true,
                 (b"sec-webtransport-http3-draft02", b"1") => wt_draft_supported = true,
                 (b"sec-webtransport-http3-draft", b"draft02") => wt_draft_selected = true,
+                (b"wt-available-protocols", v) => available_protocols = parse_string_list(v),
+                (b"wt-protocol", v) => selected_protocol = parse_string_item(v),
                 _ => debug!("ignore header {:?}", header),
             }
         }
@@ -218,9 +243,9 @@ impl Connection {
         match &mut self.perspective {
             Perspective::Server { pending_responds } => {
                 if method_connect && protocol_webtransport && wt_draft_supported {
-                    self.sessions.insert(stream_id, Session::accept(stream_id));
+                    self.sessions.insert(stream_id, Session::accept(stream_id, None));
                     pending_responds
-                        .insert(stream_id, PendingResponse::new(stream_id));
+                        .insert(stream_id, PendingResponse::new(stream_id, available_protocols));
                 }
             }
             Perspective::Client { pending_requests } => {
@@ -230,49 +255,90 @@ impl Connection {
                 assert!(wt_draft_selected);
                 let session_id = stream_id;
                 debug!("webtransport session {} established", session_id);
-                self.sessions.insert(session_id, Session::accept(session_id));
+                // draft-ietf-webtrans-http3 §3.3: the server's `WT-Protocol`
+                // must be one of what we offered, if we offered anything.
+                let negotiated_protocol = selected_protocol.filter(|p| {
+                    req.available_protocols().is_empty() || req.available_protocols().contains(p)
+                });
+                self.sessions.insert(session_id, Session::accept(session_id, negotiated_protocol));
             }
         }
     }
 
-    pub fn stream_capacity(
+    /// The protocol negotiated for `session_id` via `WT-Available-Protocols`/
+    /// `WT-Protocol` (draft-ietf-webtrans-http3 §3.3), if any. `None` if
+    /// either side didn't participate in that negotiation (e.g. an older
+    /// peer, or a session that doesn't need it).
+    pub fn negotiated_protocol(&self, session_id: u64) -> Option<&str> {
+        self.sessions.get(&session_id).and_then(Session::negotiated_protocol)
+    }
+
+    /// The protocols the client offered via `WT-Available-Protocols` on the
+    /// still-pending CONNECT request for `session_id`, most preferred first
+    /// — empty if it sent none. Server-side only; use this to pick a value
+    /// for `set_negotiated_protocol` before the response goes out (`poll`).
+    pub fn pending_available_protocols(&self, session_id: u64) -> &[String] {
+        match &self.perspective {
+            Perspective::Server { pending_responds } => pending_responds
+                .get(&session_id)
+                .map(PendingResponse::available_protocols)
+                .unwrap_or(&[]),
+            Perspective::Client { .. } => &[],
+        }
+    }
+
+    /// Picks `protocol` as the value to echo back in the pending response's
+    /// `WT-Protocol` header (server-side only) — should be one of the values
+    /// from `pending_available_protocols`. Takes effect on the next `poll`.
+    pub fn set_negotiated_protocol(&mut self, session_id: u64, protocol: String) {
+        if let Some(session) = self.sessions.get_mut(&session_id) {
+            session.set_negotiated_protocol(protocol.clone());
+        }
+        if let Perspective::Server { pending_responds } = &mut self.perspective
+            && let Some(resp) = pending_responds.get_mut(&session_id)
+        {
+            resp.set_response_protocol(protocol);
+        }
+    }
+
+    pub fn stream_capacity<F: quiche::BufFactory>(
         &mut self,
         stream_id: u64,
-        quic: &mut quiche::Connection,
+        quic: &mut quiche::Connection<F>,
     ) -> Result<usize> {
         let stream = self.streams.get(&stream_id).unwrap();
         stream.capacity(quic)
     }
 
-    pub fn stream_send(
+    pub fn stream_send<F: quiche::BufFactory>(
         &mut self,
         stream_id: u64,
-        quic: &mut quiche::Connection,
+        quic: &mut quiche::Connection<F>,
         buf: &[u8],
         fin: bool,
     ) -> Result<usize> {
-        trace!("send on stream {}: {:?}", stream_id, buf);
+        trace!("send on {} bytes on stream {}", buf.len(), stream_id);
         let stream = self.streams.get_mut(&stream_id).unwrap();
         stream.send(quic, buf, fin)
     }
 
     /// does not send buf partially.
-    pub fn stream_send_if_capacity(
+    pub fn stream_send_if_capacity<F: quiche::BufFactory>(
         &mut self,
         stream_id: u64,
-        quic: &mut quiche::Connection,
+        quic: &mut quiche::Connection<F>,
         buf: &[u8],
         fin: bool,
     ) -> Result<()> {
         let stream = self.streams.get_mut(&stream_id).unwrap();
         stream.send_if_capacity(quic, buf, fin)
     }
-    
+
     pub fn session_ids(&self) -> Vec<u64> {
         self.sessions.keys().cloned().collect()
     }
 
-    pub fn close_session(&mut self, session_id: SessionId, error_code: u32, error_msg: &str, quic: &mut quiche::Connection, h3: &mut h3::Connection) -> Result<()> {
+    pub fn close_session<F: quiche::BufFactory>(&mut self, session_id: SessionId, error_code: u32, error_msg: &str, quic: &mut quiche::Connection<F>, h3: &mut h3::Connection) -> Result<()> {
         let _session = self.sessions.remove(&session_id).unwrap();
         let mut buf = [0u8; 1024];
         let value = {
@@ -284,7 +350,11 @@ impl Connection {
         };
         let capsule = Capsule::new(WT_CLOSE_SESSION, value);
         let len = capsule.encode(&mut buf)?;
-        let sent = h3.send_body(quic, session_id, &buf[..len], false).unwrap();
+        let sent = match h3.send_body(quic, session_id, &buf[..len], false) {
+            Ok(v) => v,
+            Err(h3::Error::Done) => return Err(Error::Done),
+            Err(e) => unimplemented!("{:?}", e),
+        };
         assert_eq!(sent, len);
         Ok(())
     }

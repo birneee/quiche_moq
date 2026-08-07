@@ -64,7 +64,6 @@ fn main() {
             c
         },
         endpoint,
-        None,
     );
 
     runner.register_socket(socket);
@@ -89,7 +88,11 @@ fn post_handle_recvs(runner: &mut Runner) {
             info!("subscribe clock second");
             moq_session.subscribe(
                 &"testsrc--mp4".parse().unwrap(),
+                None,
+                None,
+                quiche_moq::wire::control_message::subscribe::FilterType::NextGroupStart,
                 wt_conn,
+                h3_conn,
                 quic_conn,
             ).unwrap();
             conn.app_data.subscribed = true;

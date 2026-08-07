@@ -132,7 +132,6 @@ fn main() {
             c
         },
         endpoint,
-        None,
     );
 
     runner.registry.register_external(
@@ -194,15 +193,19 @@ fn post_handle_recvs(runner: &mut Runner) {
                     None => break,
                     Some(v) => *v,
                 };
-                conn.app_data.moq_session = Some(MoqTransportSession::accept(session_id.into(), Config::default()));
+                conn.app_data.moq_session = Some(MoqTransportSession::accept(session_id.into(), Config::default()).unwrap());
                 conn.app_data.moq_session.as_mut().unwrap()
             }
         };
-        moq.poll(wt_conn, h3_conn, quic_conn);
-        while let Some((request_id, sub)) = moq.subscription_inbox_next() {
+        moq.handle(wt_conn, h3_conn, quic_conn);
+        let mut new_aliases: Vec<quiche_moq::wire::TrackAlias> = Vec::new();
+        moq.process_subscription_requests(|_request_id, sub, track_alias| {
             assert_eq!(sub.track_namespace().0.0, [b"testsrc"]);
             assert_eq!(sub.track_name(), b"mp4");
-            let track_alias = moq.accept_subscription(*request_id, None, wt_conn, quic_conn);
+            new_aliases.push(track_alias);
+            quiche_moq::SubscriptionRequestAction::Accept
+        }, wt_conn, quic_conn);
+        for track_alias in new_aliases {
             conn.app_data
                 .tracks
                 .insert(track_alias, Mp4TrackState::new(track_alias));

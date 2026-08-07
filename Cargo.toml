@@ -1,15 +1,20 @@
 [workspace]
 members = [
     "http_capsule",
-    "moq_relay",
-    "moq_utils",
+    "moq_core",
+    "moq_core_async",
+    "moq_tokio",
+    "moq_cli",
+    "moq_loc",
+    "moq_object_cache",
+    "moq_pacing",
     "quiche_moq_macros",
     "quiche_h3_utils",
     "quiche_moq",
     "quiche_moq/examples/*",
-    "quiche_moq_web",
+    "moq_web",
     "quiche_moq_webtransport_helper",
-    "quiche_moq_wire",
+    "moq_wire",
     "quiche_utils",
     "quiche_webtransport",
     "short_buf",
@@ -27,25 +32,37 @@ log = "0.4.28"
 mio = "1.0"
 mp4 = "0.14.0"
 octets = "0.3"
-quiche = { version = "0.26"}
-qlog = { version = "0.16" }
+quiche = { version = "0.29"}
+qlog = { version = "0.18" }
+libc = "0.2"
 quiche_h3_utils = { path="quiche_h3_utils" }
-quiche_mio_runner = { git = "https://github.com/birneee/quiche_mio_runner" }
+quiche_mio_runner = { git="https://github.com/birneee/quiche_mio_runner" }
 quiche_moq = { path="quiche_moq" }
-quiche_moq_wire = { path="quiche_moq_wire" }
+moq_wire = { path="moq_wire" }
 quiche_utils = { path="quiche_utils" }
 quiche_webtransport = { path="quiche_webtransport" }
 rcgen = "0.13.2"
 short_buf = { path = "short_buf" }
 smallvec = "2.0.0-alpha.11"
 url = "2.5.7"
+# `Instant`/`SystemTime` backed by `performance.now()` on wasm32;
+# a plain re-export of `std::time` on every other target.
+web-time = "1.1.0"
 serde_json = "1"
+rstest = "0.25"
 quiche_moq_webtransport_helper = { path="quiche_moq_webtransport_helper" }
 quiche_moq_macros = { path="quiche_moq_macros" }
 http_capsule = { path = "http_capsule" }
 quiche_endpoint_utils = { path="quiche_endpoint_utils" }
+moq_object_cache = { path="moq_object_cache" }
+moq_pacing = { path="moq_pacing" }
+moq_loc = { path="moq_loc" }
+moq_core = { path="moq_core" }
+moq_core_async = { path="moq_core_async" }
+tokio = { version = "1", features = ["rt", "macros", "sync", "time"] }
+tokio-quiche = { git = "https://github.com/birneee/quiche", branch = "webtransport_streams_fix-2452" }
 
 [patch.crates-io]
-quiche = { git="https://github.com/birneee/quiche", branch = "webtransport_streams_and_qlog_reference_time" }
-octets = { git="https://github.com/birneee/quiche", branch = "webtransport_streams_and_qlog_reference_time" }
-qlog = { git="https://github.com/birneee/quiche", branch = "webtransport_streams_and_qlog_reference_time" }
+quiche = { git="https://github.com/birneee/quiche", branch = "webtransport_streams_fix-2452" }
+octets = { git="https://github.com/birneee/quiche", branch = "webtransport_streams_fix-2452" }
+qlog = { git="https://github.com/birneee/quiche", branch = "webtransport_streams_fix-2452" }

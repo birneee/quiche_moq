@@ -1,0 +1,8 @@
+[package]
+name = "moq_loc"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+octets = { workspace = true }
+moq_wire = { workspace = true }

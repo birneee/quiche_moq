@@ -73,7 +73,6 @@ fn main() {
             c
         },
         endpoint,
-        None,
     );
 
     runner.register_socket(socket);
@@ -108,9 +107,9 @@ fn post_handle_recvs(runner: &mut Runner) {
             continue 'conn;
         };
 
-        while let Some((request_id, _subscription)) = moq_session.subscription_inbox_next() {
-            moq_session.accept_subscription(*request_id, None, wt_conn, quic_conn);
-        }
+        moq_session.process_subscription_requests(|_request_id, _subscription, _track_alias| {
+            moq::SubscriptionRequestAction::Accept
+        }, wt_conn, quic_conn);
         if let Some(date_time_str) = &date_time_str {
             // if track is not writable skip the time object
             for track_alias in moq_session.writable() {

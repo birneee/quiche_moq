@@ -4,4 +4,5 @@
 /result
 /target
 *.sqlog
-*.txt
+/drafts
+/.vscode

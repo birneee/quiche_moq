@@ -2,12 +2,14 @@ mod connection;
 mod error;
 mod pending_request;
 mod pending_response;
+mod protocol_negotiation;
 mod session;
 mod stream;
 pub mod test_utils;
 
 pub use crate::connection::Connection;
 pub use crate::error::Error;
+pub use crate::error::Result;
 
 pub type SessionId = u64;
 
@@ -44,7 +46,7 @@ pub const WT_MAX_SESSIONS_H3_SETTINGS_PARAMETER_ID: u64 = 0x14e9cd29;
 pub const WT_CLOSE_SESSION: u64 = 0x2843;
 
 /// Configure H3 for WebTransport.
-pub fn configure_h3(c: &mut quiche::h3::Config) -> Result<(), quiche::h3::Error> {
+pub fn configure_h3(c: &mut quiche::h3::Config) -> core::result::Result<(), quiche::h3::Error> {
     c.enable_extended_connect(true);
     c.enable_webtransport_streams(true);
     c.set_additional_settings(vec![

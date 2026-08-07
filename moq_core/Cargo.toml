@@ -1,0 +1,18 @@
+[package]
+name = "moq_core"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+qlog = ["dep:qlog", "dep:serde_json", "moq_wire/qlog"]
+
+[dependencies]
+octets = { workspace = true }
+moq_wire = { workspace = true }
+short_buf = { path = "../short_buf" }
+log = { workspace = true }
+smallvec = { workspace = true }
+partial-borrow = "1.0.1"
+web-time = { workspace = true }
+qlog = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }

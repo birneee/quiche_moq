@@ -64,7 +64,7 @@ pub fn _init_webtransport_pipe() -> (
             b
         })
         .unwrap();
-        c.set_initial_max_streams_uni(5);
+        c.set_initial_max_streams_uni(20);
         c.set_initial_max_streams_bidi(2);
         c.set_initial_max_data(10000000);
         c.set_initial_max_stream_data_bidi_remote(1000000);
@@ -109,6 +109,7 @@ pub fn _init_webtransport_pipe() -> (
         &mut c_h3,
         &mut pipe.client,
         "https://example.org/".parse().unwrap(),
+        &[],
     );
 
     let mut s_wt = crate::Connection::new(true);

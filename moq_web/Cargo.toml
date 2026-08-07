@@ -1,0 +1,67 @@
+[package]
+name = "moq_web"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wasm-bindgen = { version = "0.2.105", features = [] }
+wasm-bindgen-futures = "0.4.55"
+log = "0.4.28"
+console_log = "1.0.0"
+moq_core = { workspace = true }
+moq_core_async = { workspace = true }
+moq_loc = { workspace = true }
+moq_object_cache = { workspace = true }
+moq_pacing = { workspace = true }
+console_error_panic_hook = "0.1.7"
+
+[dependencies.web-sys]
+version = "0.3.82"
+features = [
+    "AddEventListenerOptions",
+    "AudioBuffer",
+    "AudioBufferOptions",
+    "AudioBufferSourceNode",
+    "AudioContext",
+    "AudioContextOptions",
+    "AudioData",
+    "AudioDataCopyToOptions",
+    "AudioDecoder",
+    "AudioDecoderConfig",
+    "AudioDecoderInit",
+    "AudioDestinationNode",
+    "AudioNode",
+    "AudioScheduledSourceNode",
+    "BaseAudioContext",
+    "CanvasRenderingContext2d",
+    "Document",
+    "EncodedAudioChunk",
+    "EncodedAudioChunkInit",
+    "EncodedAudioChunkType",
+    "EncodedVideoChunk",
+    "EncodedVideoChunkInit",
+    "EncodedVideoChunkType",
+    "Event",
+    "EventTarget",
+    "HtmlCanvasElement",
+    "ReadableStream",
+    "ReadableStreamByobReader",
+    "ReadableStreamDefaultReader",
+    "ReadableStreamGetReaderOptions",
+    "ReadableStreamReaderMode",
+    "Url",
+    "UrlSearchParams",
+    "VideoDecoder",
+    "VideoDecoderConfig",
+    "VideoDecoderInit",
+    "VideoFrame",
+    "WebTransport",
+    "WebTransportBidirectionalStream",
+    "WebTransportSendStream",
+    "Window",
+    "WritableStream",
+    "WritableStreamDefaultWriter",
+]

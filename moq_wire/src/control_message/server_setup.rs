@@ -1,0 +1,153 @@
+use crate::bytes::{FromBytes, ToBytes};
+use crate::error::Error;
+use crate::vi64;
+use crate::version;
+use crate::{MOQ_VERSION_DRAFT_07, MOQ_VERSION_DRAFT_10, MOQ_VERSION_DRAFT_11, MOQ_VERSION_DRAFT_16, MOQ_VERSION_DRAFT_18, SERVER_SETUP_MESSAGE_ID, SERVER_SETUP_MESSAGE_ID_VERSION_UNTIL_10, SetupParameters, Version};
+use octets::Octets;
+use octets::OctetsMut;
+use crate::control_message::ControlMessage;
+
+#[derive(Debug)]
+pub struct ServerSetupMessage {
+    pub selected_version: Version,
+    pub setup_parameters: SetupParameters,
+}
+
+impl ServerSetupMessage {
+    pub fn new(selected_version: Version, setup_parameters: SetupParameters) -> Self {
+        Self {
+            selected_version,
+            setup_parameters,
+        }
+    }
+
+    /// Decodes the body using `encoding`'s varint scheme, requiring it to consume the
+    /// buffer exactly (see [`Self::from_body_bytes`]).
+    fn decode_body(b: &mut Octets, encoding: Version) -> crate::error::Result<Self> {
+        // draft 15+ dropped the selected-version field from SERVER_SETUP's wire
+        // format too (see `ClientSetupMessage::to_body_bytes`/`decode_body` for
+        // the full rationale and the same group-ambiguity caveat).
+        let selected_version = if version::negotiates_version_in_band(encoding) {
+            vi64::read_varint(b, encoding)?
+        } else {
+            encoding
+        };
+        let setup_parameters = SetupParameters::from_bytes(b, encoding)?;
+        if b.cap() != 0 {
+            return Err(Error::ProtocolViolation("SETUP body not fully consumed".into()));
+        }
+        Ok(Self { selected_version, setup_parameters })
+    }
+}
+
+impl ControlMessage for ServerSetupMessage {
+    const MESSAGE_IDS: &'static [u64] = &[
+        SERVER_SETUP_MESSAGE_ID_VERSION_UNTIL_10,
+        SERVER_SETUP_MESSAGE_ID,
+    ];
+
+    fn message_id_for_version(version: Version) -> u64 {
+        match version {
+            MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_10 => SERVER_SETUP_MESSAGE_ID_VERSION_UNTIL_10,
+            MOQ_VERSION_DRAFT_11..=MOQ_VERSION_DRAFT_18 => SERVER_SETUP_MESSAGE_ID,
+            _ => unimplemented!()
+        }
+    }
+
+    fn qlog_type_name(&self) -> &'static str { "server_setup" }
+
+    fn to_body_bytes(&self, b: &mut OctetsMut, version: Version) -> crate::error::Result<()> {
+        if version::negotiates_version_in_band(version) {
+            vi64::write_varint(b, self.selected_version, version)?;
+        }
+        SetupParameters::to_bytes(&self.setup_parameters, b, version)?;
+        Ok(())
+    }
+
+    /// A receiver can't know in advance which encoding profile the peer used —
+    /// that's what SETUP is negotiating. Four profiles exist: vi64 + delta KVPs
+    /// (draft 17+), old varints + delta KVPs (draft 15-16), old varints +
+    /// absolute KVPs (draft 11-14), old varints + TLV triplets (draft 07-10).
+    /// Try each; a wrong guess essentially never fully consumes the body.
+    fn from_body_bytes(b: &mut Octets, _version: Version) -> crate::error::Result<Self> {
+        let raw = b.buf();
+        for encoding in [MOQ_VERSION_DRAFT_18, MOQ_VERSION_DRAFT_16, MOQ_VERSION_DRAFT_11, MOQ_VERSION_DRAFT_07] {
+            if let Ok(v) = Self::decode_body(&mut Octets::with_slice(raw), encoding) {
+                return Ok(v);
+            }
+        }
+        Err(Error::ProtocolViolation("SERVER_SETUP body matches no known encoding".into()))
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::control_message::ControlMessageEnum;
+    use super::*;
+    use crate::{SetupParameters, MOQ_VERSION_DRAFT_07, MOQ_VERSION_DRAFT_12, MOQ_VERSION_DRAFT_13,
+        MOQ_VERSION_DRAFT_14, MOQ_VERSION_DRAFT_15, MOQ_VERSION_DRAFT_17};
+    use rstest::rstest;
+
+    /// A receiver decoding SERVER_SETUP never actually knows the real negotiated
+    /// version in advance (that's what SETUP is negotiating) — it always falls back
+    /// to some local default guess (`Config::setup_version`, draft-16 by default).
+    /// Encode with the *real* version but always decode with that same draft-16
+    /// guess, covering every real version this crate offers by default
+    /// (`SUPPORTED_MOQ_VERSIONS`, draft 11+ — all sharing the fixed-u16 length field
+    /// this guess needs to parse the header at all) to prove `from_body_bytes`'s
+    /// try-each-profile disambiguation (see its doc comment) doesn't depend on
+    /// guessing right. This is the exact scenario that broke default (unpinned)
+    /// negotiation once draft-17/18 joined `SUPPORTED_MOQ_VERSIONS`.
+    ///
+    /// draft 15+ dropped the selected-version field from the wire, so only the
+    /// wire-format group is recoverable, not the exact version — `expected_version`
+    /// diverges from `real_version` for 15 and 17 here.
+    #[rstest]
+    #[case(MOQ_VERSION_DRAFT_11, MOQ_VERSION_DRAFT_11)]
+    #[case(MOQ_VERSION_DRAFT_12, MOQ_VERSION_DRAFT_12)]
+    #[case(MOQ_VERSION_DRAFT_13, MOQ_VERSION_DRAFT_13)]
+    #[case(MOQ_VERSION_DRAFT_14, MOQ_VERSION_DRAFT_14)]
+    #[case(MOQ_VERSION_DRAFT_15, crate::MOQ_VERSION_DRAFT_16)]
+    #[case(crate::MOQ_VERSION_DRAFT_16, crate::MOQ_VERSION_DRAFT_16)]
+    #[case(MOQ_VERSION_DRAFT_17, MOQ_VERSION_DRAFT_18)]
+    #[case(MOQ_VERSION_DRAFT_18, MOQ_VERSION_DRAFT_18)]
+    fn roundtrips_regardless_of_decoder_version_guess(#[case] real_version: Version, #[case] expected_version: Version) {
+        // No `role`: it was removed from the spec after draft-07 (see
+        // `SetupParameters::to_bytes`), so it wouldn't round-trip for these
+        // versions (11+) regardless of the decoder-guess ambiguity under test here.
+        let orig = ServerSetupMessage::new(real_version, SetupParameters {
+            path: None,
+            max_request_id: Some(100),
+            role: None,
+            extra_parameters: vec![],
+        });
+        let mut b = [0u8; 100];
+        let mut o = OctetsMut::with_slice(&mut b);
+        orig.to_bytes(&mut o, real_version).unwrap();
+        let len = o.off();
+        let mut o = Octets::with_slice(&b[..len]);
+        // moq_core::Config::default().setup_version, duplicated here since moq_wire
+        // doesn't depend on moq_core.
+        let guess = crate::MOQ_VERSION_DRAFT_16;
+        let ControlMessageEnum::ServerSetup(decoded) = ControlMessageEnum::from_bytes(&mut o, guess).unwrap() else { panic!() };
+        assert_eq!(decoded.selected_version, expected_version);
+        assert_eq!(decoded.setup_parameters, orig.setup_parameters);
+    }
+
+    #[test]
+    fn decode_draft7() {
+        let b = [0x40, 0x41, 0xc, 0xc0, 0x0, 0x0, 0x0, 0xff, 0x0, 0x0, 0x7, 0x1, 0x0, 0x1, 0x3];
+        let mut b = Octets::with_slice(&b);
+        let cm = ControlMessageEnum::from_bytes(&mut b, MOQ_VERSION_DRAFT_07).unwrap();
+        assert_eq!(b.cap(), 0);
+        assert!(matches!(cm, ControlMessageEnum::ServerSetup(..)));
+        println!("{:?}", cm);
+
+        let b = [0x40, 0x41, 0x9, 0xc0, 0x0, 0x0, 0x0, 0xff, 0xd, 0xad, 0x1, 0x0];
+        let mut b = Octets::with_slice(&b);
+        let cm = ControlMessageEnum::from_bytes(&mut b, MOQ_VERSION_DRAFT_07).unwrap();
+        assert_eq!(b.cap(), 0);
+        assert!(matches!(cm, ControlMessageEnum::ServerSetup(..)));
+        println!("{:?}", cm);
+    }
+}

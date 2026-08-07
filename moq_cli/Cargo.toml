@@ -1,0 +1,33 @@
+[package]
+name = "moq-cli"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "moq"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true }
+env_logger = { workspace = true }
+log = { workspace = true }
+url = { workspace = true }
+libc = { workspace = true }
+mio = { workspace = true, features = ["os-ext"] }
+quiche_mio_runner = { workspace = true }
+quiche_moq = { workspace = true, features = ["qlog"] }
+moq_wire = { workspace = true }
+quiche_moq_webtransport_helper = { workspace = true }
+quiche_endpoint_utils = { workspace = true }
+quiche_utils = { workspace = true }
+moq_loc = { workspace = true }
+moq_object_cache = { workspace = true }
+moq_pacing = { workspace = true }
+partial-borrow = "1.0.1"
+bytes = { workspace = true }
+boring = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
+serde_json = { workspace = true }
+rstest = { workspace = true }

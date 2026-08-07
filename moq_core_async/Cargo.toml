@@ -1,0 +1,12 @@
+[package]
+name = "moq_core_async"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+moq_core = { workspace = true }
+moq_object_cache = { workspace = true }
+log = { workspace = true }
+# futures-channel only (oneshot/mpsc) — no executor, no platform deps, same
+# constraint as the rest of this crate.
+futures = { version = "0.3", default-features = false, features = ["std"] }

@@ -7,3 +7,4 @@ edition = "2024"
 log = { workspace = true }
 boring = { workspace = true }
 rcgen = { workspace = true }
+quiche = { workspace = true }

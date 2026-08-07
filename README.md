@@ -28,79 +28,41 @@ $ RUST_LOG=info cargo run -p time-client
 [INFO  time_client] received "2025-10-17T11:37:19.270110847+02:00"
 ```
 
+## Architecture
+
+`moq_wire` (wire format) → `moq_core` (sans-IO session state machine, talking
+to a small `Transport` trait) → a `Transport` impl per platform: `quiche_moq`
+(native QUIC/WebTransport, used by `moq_cli`) and `moq_web` (browser
+WebTransport). See each crate's own README for details.
+
 ## Features
 
-- multi version support
-  - [x] draft 07
-  - [x] draft 08
-  - [x] draft 09
-  - [x] draft 10
-  - [x] draft 11
-  - [x] draft 12
-  - [x] draft 13
-  - [ ] draft 14
-  - [ ] draft 15
-  - [x] draft 16
-- [x] MoQ via WebTransport
-- [ ] MoQ via QUIC
-- [x] subscribe
-- [ ] fetch
-- [ ] announce
-- [x] publish
-- [ ] unannounce
-- [ ] unsubscribe
-- [ ] track status
-- [x] streams
-- [ ] datagrams
-- [x] relay
-- [x] object extension headers
-- [ ] [qlog](https://datatracker.ietf.org/doc/draft-pardue-moq-qlog-moq-events/05/)
-  - [x] control_message_created
-  - [x] control_message_parsed
-  - [x] subgroup_header_created
-  - [x] subgroup_header_parsed
-  - [x] subgroup_object_created
-  - [x] subgroup_object_parsed
-  - [x] subgroup_object_received (custom)
-- interop
-  - [ ] [Cloudflare](https://blog.cloudflare.com/moq/)
-    - [x] handshake
-    - [x] subscribe
-    - [ ] publish
-  - [x] [moqtransport](https://github.com/mengelbart/moqtransport)
-    - [x] handshake
-    - [x] subscribe
-    - [x] publish
+- multi version support: draft 07 through draft 18 (see caveat below for 17/18)
+- subscribe, publish, and namespace announce/unannounce over WebTransport
+- relaying with selective namespace re-announcement, priority propagation, and
+  delivery-timeout aggregation across downstream subscribers
+- in-browser client (`moq_web`) with live WebCodecs video/audio playback
+- adaptive playback pacing and pluggable object caching, shared between the
+  native and browser clients
+- typed [LOC](https://datatracker.ietf.org/doc/draft-ietf-moq-loc/)
+  object-extension headers, driving automatic codec setup and keyframe
+  detection
+- fMP4 demuxing and remuxing with automatic codec detection
+- [qlog](https://datatracker.ietf.org/doc/draft-pardue-moq-qlog-moq-events/05/)
+  tracing for control messages and object delivery
+- runtime-tunable QUIC transport (congestion window, flow control, keepalive)
+  and a runtime-toggleable padding stream
+- interop tested against [Cloudflare](https://blog.cloudflare.com/moq/) and
+  [moqtransport](https://github.com/mengelbart/moqtransport)
 
-## Flow Chart
-```
-   +-----------------+
-   |                 |
-   |                 v
-   |     🗲 io event or timer fires
-   |                 ∨
-   |     QUIC process all UDP packets & timeouts
-   |                 v
-   |     setup H3 connections
-   |                 v
-   |     update H3 from QUIC state
-   |                 v
-   |     update WebTransport state from H3
-   |                 v
-   |     setup WebTransport sessions
-   |                 v
-   |     setup MoQ sessions
-   |                 v
-   |     update MoQ from WebTransport state
-   |                 v
-   |     read MoQ objects
-   |                 v
-   |     manage MoQ subscriptions
-   |                 v
-   |     send MoQ objects
-   |                 v
-   |     QUIC collect garbage
-   |                 |
-   |                 |
-   +-----------------+
-```
+## Planned Features
+
+- MoQ via native QUIC (WebTransport only today)
+- fetch, unsubscribe, subscribe-to-namespace / track status
+- datagrams (streams only today)
+
+> Draft 17+ negotiates its version via ALPN (QUIC) or the
+> `WT-Available-Protocols` header (WebTransport, §3.1.3) instead of the SETUP
+> message — but that header isn't settable from the browser's `WebTransport`
+> JS API, so this implementation keeps the old in-band SETUP negotiation at
+> every draft as a deliberate, non-compliant testing simplification.

@@ -13,6 +13,12 @@ pub enum Error {
     /// The error code sent as part of the `RESET_STREAM` frame is provided as
     /// associated data.
     StreamReset(u64),
+    /// The peer sent `STOP_SENDING` on the specified stream — it doesn't
+    /// want any more data on it (e.g. no subscriber wants this track).
+    ///
+    /// The error code sent as part of the `STOP_SENDING` frame is provided
+    /// as associated data.
+    StreamStopped(u64),
     /// The operation cannot be completed because the stream is in an
     /// invalid state.
     ///

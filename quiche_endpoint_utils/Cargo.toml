@@ -5,3 +5,7 @@ edition = "2024"
 
 [dependencies]
 quiche_mio_runner = { workspace = true }
+qlog = { workspace = true }
+serde_json = { workspace = true }
+libc = "0.2"
+mio = { workspace = true, features = ["os-ext"] }

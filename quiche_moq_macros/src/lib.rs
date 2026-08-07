@@ -1,7 +1,7 @@
 use proc_macro::TokenStream;
 use proc_macro2::{Ident, TokenStream as TokenStream2};
 use quote::quote;
-use syn::{FnArg, ImplItem, ItemImpl, Pat, Type, parse_macro_input};
+use syn::{FnArg, ImplItem, ItemImpl, Pat, Path, Type, parse_macro_input, parse_quote};
 
 /// Returns `Some(field_name)` if this param is a trailing connection ref:
 /// a param named "wt", "h3", or "quic" whose type is `&mut _::Connection`.
@@ -48,9 +48,35 @@ fn param_ident(arg: &FnArg) -> Option<&Ident> {
     Some(&pi.ident)
 }
 
+/// Returns a copy of the arg with `mut` stripped from the pattern (for forwarding signatures).
+fn strip_mut(arg: &FnArg) -> FnArg {
+    let FnArg::Typed(mut pt) = arg.clone() else { return arg.clone() };
+    if let Pat::Ident(ref mut pi) = *pt.pat {
+        pi.mutability = None;
+    }
+    FnArg::Typed(pt)
+}
+
+/// `#[generate_moq_handle(crate_path)]` — `crate_path` is prepended to the type name in the
+/// "Generated from" intra-doc link so it resolves cross-crate (e.g. `quiche_moq`).
 #[proc_macro_attribute]
-pub fn generate_moq_handle(_attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn generate_moq_handle(attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as ItemImpl);
+
+    // Optional crate path prefix from the attribute argument, e.g. `quiche_moq`.
+    let crate_prefix: String = if attr.is_empty() {
+        String::new()
+    } else {
+        let path = parse_macro_input!(attr as Path);
+        format!("{}::", quote!(#path))
+    };
+
+    // Build the qualified type name for intra-doc links, e.g. "quiche_moq::MoqTransportSession".
+    let type_name = match input.self_ty.as_ref() {
+        Type::Path(tp) => tp.path.segments.last().map(|s| s.ident.to_string()),
+        _ => None,
+    }.unwrap_or_default();
+    let source_type = format!("{crate_prefix}{type_name}");
 
     let mut methods: Vec<TokenStream2> = Vec::new();
 
@@ -80,6 +106,14 @@ pub fn generate_moq_handle(_attr: TokenStream, item: TokenStream) -> TokenStream
         let where_clause = &sig.generics.where_clause;
         let ret = &sig.output;
 
+        let docs: Vec<_> = method.attrs.iter()
+            .filter(|a| a.path().is_ident("doc"))
+            .collect();
+        let generated_doc: syn::Attribute = {
+            let link = format!(" Generated from [`{source_type}::{name}`].");
+            parse_quote!(#[doc = #link])
+        };
+
         // Business arg names for the forwarding call
         let business_args: Vec<_> = business_params
             .iter()
@@ -92,8 +126,12 @@ pub fn generate_moq_handle(_attr: TokenStream, item: TokenStream) -> TokenStream
             .map(|f| quote! { self.#f })
             .collect();
 
+        let forwarding_params: Vec<FnArg> = business_params.iter().map(strip_mut).collect();
         methods.push(quote! {
-            pub fn #name #generics (#self_tok, #(#business_params),*) #ret #where_clause {
+            #(#docs)*
+            #[doc = ""]
+            #generated_doc
+            pub fn #name #generics (#self_tok, #(#forwarding_params),*) #ret #where_clause {
                 self.session.#name(#(#business_args,)* #(#conn_args),*)
             }
         });

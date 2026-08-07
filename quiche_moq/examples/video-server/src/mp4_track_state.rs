@@ -83,7 +83,7 @@ impl Mp4TrackState {
                     }
                     let Some(header) = header else { return };
                     if !*sent_header {
-                        match moq.send_obj_hdr(header.size as usize, self.track_alias, wt, h3, quic)
+                        match moq.send_obj_hdr(header.size as usize, self.track_alias, None, wt, h3, quic)
                         {
                             Ok(_) => {}
                             Err(moq::Error::UnfinishedPayload) => {
