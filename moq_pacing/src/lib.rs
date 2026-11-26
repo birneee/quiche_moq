@@ -40,7 +40,8 @@ pub struct PacingThresholds<'a> {
 
 impl PacingThresholds<'_> {
     /// `moq_cli`'s original fd-write-backlog pacing. Buffer unit: number of
-    /// encoded output fragments queued but not yet flushed to the sink.
+    /// complete objects already cached ahead of the one currently being
+    /// written to the sink.
     pub const FRAGMENT_BACKLOG: PacingThresholds<'static> = PacingThresholds {
         bands: &[
             Band { above: 10.0, speed: 0.90 },

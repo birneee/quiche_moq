@@ -1,7 +1,5 @@
-use crate::bytes::{FromBytes, ToBytes};
+use crate::prelude::*;
 use crate::error::{Error, Result};
-use crate::{Version, MOQ_VERSION_DRAFT_07};
-use octets::{Octets, OctetsMut};
 
 /// not used after draft7
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -27,20 +25,5 @@ impl Role {
             Role::Subscriber => 0x02,
             Role::PubSub => 0x03,
         }
-    }
-}
-
-impl FromBytes for Role {
-    fn from_bytes(b: &mut Octets, version: Version) -> Result<Self> {
-        assert_eq!(version, MOQ_VERSION_DRAFT_07);
-        Self::from_id(b.get_varint()?)
-    }
-}
-
-impl ToBytes for Role {
-    fn to_bytes(&self, b: &mut OctetsMut, version: Version) -> Result<()> {
-        assert_eq!(version, MOQ_VERSION_DRAFT_07);
-        b.put_varint(self.to_id())?;
-        Ok(())
     }
 }

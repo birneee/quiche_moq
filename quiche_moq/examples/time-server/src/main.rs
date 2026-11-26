@@ -1,5 +1,6 @@
 extern crate core;
 
+use moq::OutgoingObject;
 use chrono::Local;
 use log::{info, trace};
 use quiche_mio_runner::quiche_endpoint::quiche::PROTOCOL_VERSION;
@@ -27,12 +28,17 @@ impl Default for ConnAppData {
 struct AppData {
     /// instant when to send the next time object
     next_object_instant: Instant,
+    /// group_id of the next time object — each is sent as its own one-object
+    /// subgroup (opened and fin'd immediately), so this just needs to keep
+    /// increasing across calls.
+    next_group_id: u64,
 }
 
 impl Default for AppData {
     fn default() -> Self {
         Self {
             next_object_instant: Instant::now() + Duration::from_secs(1),
+            next_group_id: 0,
         }
     }
 }
@@ -82,18 +88,20 @@ fn main() {
 
 fn post_handle_recvs(runner: &mut Runner) {
     let now = Instant::now();
-    let next_object_instant = &mut runner.endpoint.app_data_mut().next_object_instant;
-    // date_time_str in None when no object should be sent now
-    let date_time_str = if *next_object_instant <= now {
-        *next_object_instant += Duration::from_secs(1);
+    let ad = runner.endpoint.app_data_mut();
+    // date_time_str is None when no object should be sent now
+    let (date_time_str, group_id) = if ad.next_object_instant <= now {
+        ad.next_object_instant += Duration::from_secs(1);
+        let group_id = ad.next_group_id;
+        ad.next_group_id += 1;
         let str = Local::now().to_rfc3339();
         trace!("new date: {}", str);
-        Some(str)
+        (Some(str), group_id)
     } else {
-        None
+        (None, 0)
     };
     // timeout until the next time object
-    let app_timeout = next_object_instant.duration_since(now);
+    let app_timeout = ad.next_object_instant.duration_since(now);
     runner.set_app_timeout(app_timeout);
     'conn: for icid in &mut runner.endpoint.conn_index_iter() {
         let Some(conn) = runner.endpoint.conn_mut(icid) else { continue };
@@ -106,23 +114,30 @@ fn post_handle_recvs(runner: &mut Runner) {
         } = &mut conn.app_data.moq_helper.state else {
             continue 'conn;
         };
+        let (moq_session, mut t) = moq_session.core(wt_conn, h3_conn, quic_conn);
 
-        moq_session.process_subscription_requests(|_request_id, _subscription, _track_alias| {
-            moq::SubscriptionRequestAction::Accept
-        }, wt_conn, quic_conn);
+        // other requests are dropped, which rejects them
+        while let Some(event) = moq_session.next_event() {
+            if let moq::Event::Request(moq::IncomingRequest::Subscribe(request)) = event {
+                let _ = moq_session.accept_request(request, moq::SubscribeOk::default(), &mut t);
+            }
+        }
         if let Some(date_time_str) = &date_time_str {
+            const SUBGROUP_ID: u64 = 0;
+            const OBJECT_ID: u64 = 0;
+            let location = moq::wire::Location { group: group_id, object: OBJECT_ID };
             // if track is not writable skip the time object
             for track_alias in moq_session.writable() {
-                match moq_session.send_obj(
-                    date_time_str.as_bytes(),
-                    track_alias,
-                    wt_conn,
-                    h3_conn,
-                    quic_conn,
-                ) {
+                let bytes = date_time_str.as_bytes();
+                match moq_session.send_obj_hdr(track_alias, OutgoingObject { end_of_group: true, ..OutgoingObject::new(location, SUBGROUP_ID, bytes.len()) }, &mut t) {
                     Ok(_) => {}
                     Err(e) => unimplemented!("{:?}", e),
                 }
+                match moq_session.send_obj_pld(track_alias, location, bytes, &mut t) {
+                    Ok(n) if n == bytes.len() => {}
+                    other => unimplemented!("{:?}", other),
+                }
+                moq_session.fin_send_subgroup(track_alias, group_id, SUBGROUP_ID, &mut t);
             }
         }
         #[allow(clippy::never_loop)]

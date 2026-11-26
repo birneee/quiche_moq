@@ -1,86 +1,140 @@
+use crate::prelude::*;
 use crate::bytes::{FromBytes, ToBytes};
-use crate::vi64;
-use crate::{TrackAlias, Version, MOQ_VERSION_DRAFT_07, MOQ_VERSION_DRAFT_08, MOQ_VERSION_DRAFT_10, MOQ_VERSION_DRAFT_11, MOQ_VERSION_DRAFT_13, MOQ_VERSION_DRAFT_14, MOQ_VERSION_DRAFT_18, STREAM_HEADER_SUBGROUP_STREAM_TYPE_ID, SUBGROUP_UNI_STREAM_TYPE_IDS};
-use octets::{Octets, OctetsMut};
+use crate::error::{Error, Result};
+use crate::{Mode, Reader, TrackAlias, Version, Writer, DEFAULT_PUBLISHER_PRIORITY};
 
-/// draft 14 moves the type marker from bit 3 (0x8..0xD) to bit 4 (0x10..0x1D),
-/// freeing bit 3 for a real END_OF_GROUP flag — confirmed against each
-/// draft's own SUBGROUP_HEADER figure (draft-13: `0x8..0xD`, draft-14:
-/// `0x10..0x1D`). draft-15 adds DEFAULT_PRIORITY (0x20); draft-18 adds
-/// FIRST_OBJECT (0x40).
-fn is_known_type(ty: u64, version: Version) -> bool {
-    match version {
-        MOQ_VERSION_DRAFT_11..=MOQ_VERSION_DRAFT_13 => SUBGROUP_UNI_STREAM_TYPE_IDS.contains(&ty),
-        MOQ_VERSION_DRAFT_14..=MOQ_VERSION_DRAFT_18 => {
-            ty & 0x10 != 0
-                && ty & !0x7Fu64 == 0
-                && ty & 0x6 != 0x6 // SUBGROUP_ID_MODE 0b11 is reserved/invalid
-                && (version == MOQ_VERSION_DRAFT_18 || ty & 0x40 == 0)
+/// How a subgroup header gives the Subgroup ID.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum SubgroupIdMode {
+    /// absent, 0
+    Zero,
+    /// absent, the first object's ID
+    FirstObjectId,
+    /// a field of the header
+    Explicit,
+}
+
+/// What the type of a subgroup stream says (draft-ietf-moq-transport-19 §11.4.2).
+/// - draft 7 to 10: one type, an explicit Subgroup ID, properties from draft 8
+/// - draft 11 to 13: `0x8 | properties | mode << 1`
+/// - draft 14: `0x10`, END_OF_GROUP `0x8`; draft 15: DEFAULT_PRIORITY `0x20`; draft 18: FIRST_OBJECT `0x40`
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub struct SubgroupType {
+    /// Objects carry properties, Extension Headers before draft 18.
+    pub extensions: bool,
+    pub subgroup_id: SubgroupIdMode,
+    /// The subgroup holds the group's largest object, draft 14 on.
+    pub end_of_group: bool,
+    /// No Publisher Priority field, draft 15 on.
+    pub default_priority: bool,
+    /// The subgroup starts with the group's first object, draft 18 on.
+    pub first_object: bool,
+}
+
+/// The type of draft 7 to 10.
+const STREAM_HEADER_SUBGROUP: u64 = 0x4;
+
+impl SubgroupType {
+    /// With properties, which draft 7 lacks, and an explicit Subgroup ID.
+    pub fn new(version: Version) -> Self {
+        Self { extensions: version.draft() >= 8, subgroup_id: SubgroupIdMode::Explicit, end_of_group: false, default_priority: false, first_object: false }
+    }
+
+    fn decode(ty: u64, version: Version) -> Result<Self> {
+        let unknown = || Error::ProtocolViolation(format!("unknown data stream type 0x{ty:x}"));
+        let draft = version.draft();
+        if draft <= 10 {
+            return match ty {
+                STREAM_HEADER_SUBGROUP => Ok(Self::new(version)),
+                _ => Err(unknown()),
+            };
         }
-        _ => unimplemented!()
+        let marker = if draft <= 13 { 0x08 } else { 0x10 };
+        let flags = match draft {
+            11..=13 => 0,
+            14 => 0x08,
+            15..=17 => 0x08 | 0x20,
+            _ => 0x08 | 0x20 | 0x40,
+        };
+        if ty & !(0x7 | marker | flags) != 0 || ty & marker == 0 {
+            return Err(unknown());
+        }
+        let subgroup_id = match (ty >> 1) & 0x3 {
+            0 => SubgroupIdMode::Zero,
+            1 => SubgroupIdMode::FirstObjectId,
+            2 => SubgroupIdMode::Explicit,
+            _ => return Err(unknown()),
+        };
+        let flag = |bit: u64| flags & bit != 0 && ty & bit != 0;
+        Ok(Self { extensions: ty & 0x1 != 0, subgroup_id, end_of_group: flag(0x08), default_priority: flag(0x20), first_object: flag(0x40) })
+    }
+
+    /// Properties `version` lacks are an error, except END_OF_GROUP and FIRST_OBJECT, which are hints.
+    fn encode(&self, version: Version) -> Result<u64> {
+        let draft = version.draft();
+        if draft <= 10 {
+            return match (self.extensions == (draft >= 8), self.subgroup_id, self.default_priority) {
+                (true, SubgroupIdMode::Explicit, false) => Ok(STREAM_HEADER_SUBGROUP),
+                _ => Err(Error::Unencodable("a subgroup type drafts 7 to 10 don't have")),
+            };
+        }
+        if self.default_priority && draft < 15 {
+            return Err(Error::Unencodable("DEFAULT_PRIORITY before draft 15"));
+        }
+        let mode = match self.subgroup_id {
+            SubgroupIdMode::Zero => 0,
+            SubgroupIdMode::FirstObjectId => 1,
+            SubgroupIdMode::Explicit => 2,
+        };
+        let marker = if draft <= 13 { 0x08 } else { 0x10 };
+        let flag = |set: bool, bit: u64, since: u8| if set && draft >= since { bit } else { 0 };
+        Ok(marker | u64::from(self.extensions) | mode << 1
+            | flag(self.end_of_group, 0x08, 14)
+            | flag(self.default_priority, 0x20, 15)
+            | flag(self.first_object, 0x40, 18))
     }
 }
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct SubgroupHeader {
-    /// Canonical type value, without the FIRST_OBJECT bit (0x40) folded in —
-    /// see [`Self::first_object`].
-    ty: u64,
+    ty: SubgroupType,
     track_alias: TrackAlias,
     group_id: u64,
+    /// `None` until the first object for [`SubgroupIdMode::FirstObjectId`]
     subgroup_id: Option<u64>,
     publisher_priority: u8,
-    /// FIRST_OBJECT bit (0x40), added in draft-ietf-moq-transport-18 (#1618).
-    /// Ignored (always false) before draft-18.
-    first_object: bool,
 }
 
 impl SubgroupHeader {
     pub fn new(track_alias: TrackAlias, group_id: u64, subgroup_id: u64, version: Version) -> Self {
-        let ty = match version {
-            MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_10 => STREAM_HEADER_SUBGROUP_STREAM_TYPE_ID,
-            MOQ_VERSION_DRAFT_11..=MOQ_VERSION_DRAFT_13 => 0xD, //todo support other types
-            MOQ_VERSION_DRAFT_14..=MOQ_VERSION_DRAFT_18 => 0x1D, //todo support other types
-            _ => unimplemented!()
-        };
-        Self {
-            ty,
-            track_alias,
-            group_id,
-            subgroup_id: Some(subgroup_id),
-            publisher_priority: 0,
-            first_object: false,
-        }
+        Self { ty: SubgroupType::new(version), track_alias, group_id, subgroup_id: Some(subgroup_id), publisher_priority: 0 }
     }
 
     pub fn with_first_object(mut self, first_object: bool) -> Self {
-        self.first_object = first_object;
+        self.ty.first_object = first_object;
         self
     }
 
-    pub fn first_object(&self) -> bool {
-        self.first_object
+    pub fn with_publisher_priority(mut self, publisher_priority: u8) -> Self {
+        self.publisher_priority = publisher_priority;
+        self
     }
 
-    pub fn ty(&self) -> u64 {
+    pub fn with_end_of_group(mut self, end_of_group: bool) -> Self {
+        self.ty.end_of_group = end_of_group;
+        self
+    }
+
+    pub fn ty(&self) -> SubgroupType {
         self.ty
     }
 
-    /// EXTENSIONS bit (0x01 of the low nibble) — present regardless of
-    /// END_OF_GROUP (bit 3), so both the draft 11-13 values (always bit 3 = 1)
-    /// and draft 14+'s bit-3-is-0 counterparts (0x1, 0x3, 0x5) need covering.
-    pub fn extensions_present(ty: u64) -> bool {
-        [0x1, 0x3, 0x5, 0x9, 0xB, 0xD].contains(&(ty & 0xF))
+    pub fn first_object(&self) -> bool {
+        self.ty.first_object
     }
 
-    /// SUBGROUP_ID_MODE (bits 1-2) == 0b10, "Subgroup ID field is present".
-    pub fn subgroup_id_present(ty: u64) -> bool {
-        [0x4, 0x5, 0xC, 0xD].contains(&(ty & 0xF))
-    }
-
-    /// SUBGROUP_ID_MODE (bits 1-2) == 0b00, "absent, Subgroup ID is 0".
-    pub fn subgroup_id_implicit_zero(ty: u64) -> bool {
-        [0x0, 0x1, 0x8, 0x9].contains(&(ty & 0xF))
+    pub fn end_of_group(&self) -> bool {
+        self.ty.end_of_group
     }
 
     pub fn track_alias(&self) -> TrackAlias {
@@ -101,105 +155,113 @@ impl SubgroupHeader {
 }
 
 impl FromBytes for SubgroupHeader {
-    fn from_bytes(b: &mut Octets, version: Version) -> crate::error::Result<Self> {
-        let wire_ty = vi64::read_varint(b, version)?;
-        match version {
-            MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_10 => {
-                assert_eq!(wire_ty, STREAM_HEADER_SUBGROUP_STREAM_TYPE_ID)
-            }
-            MOQ_VERSION_DRAFT_11..=MOQ_VERSION_DRAFT_18 => {
-                assert!(is_known_type(wire_ty, version), "unsupported uni stream type: 0x{wire_ty:x}");
-            }
-            _ => unimplemented!()
-        }
-        let first_object = version == MOQ_VERSION_DRAFT_18 && wire_ty & 0x40 != 0;
-        let ty = wire_ty & !0x40u64;
-        let _subscribe_id = match version {
-            MOQ_VERSION_DRAFT_07 => Some(vi64::read_varint(b, version)?), // todo not sure, this is not in the spec, but cloudflare uses it, https://github.com/englishm/moq-rs/blob/ebc843de8504e37d36c3134a1181513ebdf7a34a/moq-transport/src/data/subgroup.rs
-            MOQ_VERSION_DRAFT_08..=MOQ_VERSION_DRAFT_18 => None,
-            _ => unimplemented!()
+    fn from_bytes<M: Mode>(b: &mut Reader<'_, M>, version: Version) -> Result<Self> {
+        let ty = SubgroupType::decode(b.varint()?, version)?;
+        let track_alias = TrackAlias(b.varint()?);
+        let group_id = b.varint()?;
+        let subgroup_id = match ty.subgroup_id {
+            SubgroupIdMode::Explicit => Some(b.varint()?),
+            SubgroupIdMode::Zero => Some(0),
+            SubgroupIdMode::FirstObjectId => None,
         };
-        let track_alias = vi64::read_varint(b, version)?;
-        let group_id = vi64::read_varint(b, version)?;
-        let subgroup_id = match version {
-            MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_10 => Some(vi64::read_varint(b, version)?),
-            MOQ_VERSION_DRAFT_11..=MOQ_VERSION_DRAFT_18 => {
-                if Self::subgroup_id_present(ty) {
-                    Some(vi64::read_varint(b, version)?)
-                } else if Self::subgroup_id_implicit_zero(ty) {
-                    Some(0)
-                } else {
-                    None
-                }
-            },
-            _ => unimplemented!()
-        };
-        let publisher_priority = b.get_u8()?;
-        Ok(Self {
-            ty,
-            track_alias,
-            group_id,
-            subgroup_id,
-            publisher_priority,
-            first_object,
-        })
+        // TODO take the priority the publisher announced for the track
+        let publisher_priority = if ty.default_priority { DEFAULT_PUBLISHER_PRIORITY } else { b.u8()? };
+        Ok(Self { ty, track_alias, group_id, subgroup_id, publisher_priority })
     }
 }
 
-impl  ToBytes for SubgroupHeader {
-    fn to_bytes(&self, b: &mut OctetsMut, version: Version) -> crate::error::Result<()> {
-        match version {
-            MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_10 => {
-                assert_eq!(self.ty, STREAM_HEADER_SUBGROUP_STREAM_TYPE_ID)
-            }
-            MOQ_VERSION_DRAFT_11..=MOQ_VERSION_DRAFT_18 => {
-                assert!(is_known_type(self.ty, version));
-            }
-            _ => unimplemented!()
+impl ToBytes for SubgroupHeader {
+    fn to_bytes(&self, b: &mut Writer, version: Version) -> Result<()> {
+        b.varint(self.ty.encode(version)?)?;
+        b.varint(self.track_alias.0)?;
+        b.varint(self.group_id)?;
+        if self.ty.subgroup_id == SubgroupIdMode::Explicit {
+            let id = self.subgroup_id.ok_or(Error::Unencodable("an explicit Subgroup ID that is unknown"))?;
+            b.varint(id)?;
         }
-        let wire_ty = if version == MOQ_VERSION_DRAFT_18 && self.first_object {
-            self.ty | 0x40
-        } else {
-            self.ty
-        };
-        vi64::write_varint(b, wire_ty, version)?;
-        match version {
-            MOQ_VERSION_DRAFT_07 => { vi64::write_varint(b, 0, version)?; }, // todo not sure, this is not in the spec, but cloudflare uses it, https://github.com/englishm/moq-rs/blob/ebc843de8504e37d36c3134a1181513ebdf7a34a/moq-transport/src/data/subgroup.rs
-            MOQ_VERSION_DRAFT_08..=MOQ_VERSION_DRAFT_18 => {},
-            _ => unimplemented!()
+        if !self.ty.default_priority {
+            b.u8(self.publisher_priority);
         }
-        vi64::write_varint(b, self.track_alias, version)?;
-        vi64::write_varint(b, self.group_id, version)?;
-        match version {
-            MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_10 => { vi64::write_varint(b, self.subgroup_id.unwrap(), version)?; },
-            MOQ_VERSION_DRAFT_11..=MOQ_VERSION_DRAFT_18 => {
-                if Self::subgroup_id_present(self.ty) {
-                    vi64::write_varint(b, self.subgroup_id.unwrap(), version)?;
-                }
-            },
-            _ => unimplemented!()
-        }
-        b.put_u8(self.publisher_priority)?;
         Ok(())
     }
 }
 
+
 #[cfg(test)]
 mod test {
-    use crate::bytes::{FromBytes, ToBytes};
-    use crate::MOQ_VERSION_DRAFT_11;
-    use octets::{Octets, OctetsMut};
-    use crate::subgroup::SubgroupHeader;
+    use super::*;
+    use crate::bytes::{from_slice, to_vec};
+    use crate::{MOQ_VERSION_DRAFT_10, MOQ_VERSION_DRAFT_11, MOQ_VERSION_DRAFT_13, MOQ_VERSION_DRAFT_14, MOQ_VERSION_DRAFT_15, MOQ_VERSION_DRAFT_16, MOQ_VERSION_DRAFT_18};
+    use rstest::rstest;
 
-    #[test]
-    fn test_encode_decode() {
-        let subgroup = SubgroupHeader::new(1, 2, 3, MOQ_VERSION_DRAFT_11);
-        let mut b = [0; 100];
-        let mut o = OctetsMut::with_slice(&mut b);
-        subgroup.to_bytes(&mut o, MOQ_VERSION_DRAFT_11).unwrap();
-        let len = o.off();
-        let subgroup2 = SubgroupHeader::from_bytes(&mut Octets::with_slice(&b[..len]), MOQ_VERSION_DRAFT_11).unwrap();
-        assert_eq!(subgroup, subgroup2);
+    #[rstest]
+    #[case(MOQ_VERSION_DRAFT_10)]
+    #[case(MOQ_VERSION_DRAFT_11)]
+    #[case(MOQ_VERSION_DRAFT_14)]
+    #[case(MOQ_VERSION_DRAFT_18)]
+    fn header_round_trips(#[case] version: Version) {
+        let subgroup = SubgroupHeader::new(TrackAlias(1), 2, 3, version);
+        assert_eq!(from_slice::<SubgroupHeader>(&to_vec(&subgroup, version).unwrap(), version).unwrap(), subgroup);
     }
 
+    /// Every type a draft defines decodes and encodes to itself, all others are rejected.
+    #[rstest]
+    #[case(MOQ_VERSION_DRAFT_10, &[0x4])]
+    #[case(MOQ_VERSION_DRAFT_13, &[0x8, 0x9, 0xA, 0xB, 0xC, 0xD])]
+    #[case(MOQ_VERSION_DRAFT_14, &[0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D])]
+    fn types_of_a_draft(#[case] version: Version, #[case] known: &[u64]) {
+        for ty in 0..0x80 {
+            match SubgroupType::decode(ty, version) {
+                Ok(decoded) => {
+                    assert!(known.contains(&ty), "0x{ty:x}");
+                    assert_eq!(decoded.encode(version).unwrap(), ty);
+                }
+                Err(_) => assert!(!known.contains(&ty), "0x{ty:x}"),
+            }
+        }
+    }
+
+    #[test]
+    fn later_drafts_add_flags() {
+        assert!(SubgroupType::decode(0x35, MOQ_VERSION_DRAFT_14).is_err());
+        assert!(SubgroupType::decode(0x35, MOQ_VERSION_DRAFT_15).unwrap().default_priority);
+        assert!(SubgroupType::decode(0x55, MOQ_VERSION_DRAFT_16).is_err());
+        assert!(SubgroupType::decode(0x55, MOQ_VERSION_DRAFT_18).unwrap().first_object);
+    }
+
+    /// Header type 0x14 has no EXTENSIONS bit: objects carry no extension length.
+    #[test]
+    fn object_without_extensions_field() {
+        let version = MOQ_VERSION_DRAFT_16;
+        // type, alias, group, subgroup, priority | object id, payload length, payload
+        let bytes = [0x14, 1, 2, 3, 0, 5, 1, b'x'];
+        let mut o = version.reader(&bytes);
+        let subgroup = SubgroupHeader::from_bytes(&mut o, version).unwrap();
+        let object = crate::object::ObjectHeader::decode(&mut o, version, &subgroup, None).unwrap();
+        assert_eq!((object.id(), object.payload_len()), (5, 1));
+    }
+
+    #[test]
+    fn property_beyond_its_length_is_protocol_violation() {
+        let version = MOQ_VERSION_DRAFT_16;
+        // object id, extensions length 2, odd key 1 with a 5 byte value, payload length, payload
+        let bytes = [0x15, 1, 2, 3, 0, 0, 2, 1, 5, 1, b'x'];
+        let mut o = version.reader(&bytes);
+        let subgroup = SubgroupHeader::from_bytes(&mut o, version).unwrap();
+        let object = crate::object::ObjectHeader::decode(&mut o, version, &subgroup, None);
+        assert!(matches!(object, Err(Error::ProtocolViolation(_))), "{object:?}");
+    }
+
+    /// DEFAULT_PRIORITY (0x20): no priority byte, the next byte is the object's.
+    #[test]
+    fn default_priority_header_has_no_priority_byte() {
+        let version = MOQ_VERSION_DRAFT_16;
+        // type 0x35 (0x15 | DEFAULT_PRIORITY), alias 1, group 2, subgroup 3, next byte
+        let bytes = [0x35, 1, 2, 3, 0xAA];
+        let mut o = version.reader(&bytes);
+        let subgroup = SubgroupHeader::from_bytes(&mut o, version).unwrap();
+        assert_eq!(o.consumed(), 4);
+        assert_eq!(subgroup.subgroup_id(), Some(3));
+        assert_eq!(to_vec(&subgroup, version).unwrap(), bytes[..4]);
+    }
 }

@@ -2,6 +2,10 @@
 name = "quiche_h3_utils"
 version = "0.1.0"
 edition = "2024"
+license.workspace = true
+description = "Helpers for the HTTP/3 of quiche"
+readme = "README.md"
+repository.workspace = true
 
 [dependencies]
 quiche = { workspace = true }

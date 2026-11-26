@@ -1,5 +1,4 @@
-use std::cmp::min;
-use std::mem;
+use core::cmp::min;
 
 /// A short fast buffer queue without dynamic allocations.
 /// In contrast to a BufReader the buffer is managed manually.
@@ -20,10 +19,9 @@ impl<const N: usize> Default for ShortBuf<N> {
 }
 
 impl<const N: usize> ShortBuf<N> {
-    #[allow(clippy::uninit_assumed_init)]
     pub fn new() -> Self {
         Self {
-            buf: unsafe { mem::MaybeUninit::uninit().assume_init() },
+            buf: [0; N],
             offset: 0,
             end: 0,
         }

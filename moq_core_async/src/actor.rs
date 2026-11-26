@@ -1,51 +1,45 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
-use moq_core::session::PollResult;
-use moq_core::wire::control_message::subscribe::FilterType;
+use moq_core::session::MoqTransportSession;
+use moq_core::{Event, Subscription};
+use moq_core::SubscribeOptions;
 use moq_core::wire::{NamespaceTrackname, RequestId, TrackAlias};
 
 use futures::channel::oneshot;
 
-use crate::buffered_track::{BufferedTrack, CompleteObject};
 use crate::notify::Notify;
-use crate::session::{AsyncMoqSession, SubscribeError, Subscription};
+use crate::session::{AsyncMoqSession, SubscribeError, Subscribed};
 use crate::transport::AsyncTransport;
 
-type SubscribeResponder = oneshot::Sender<Result<Subscription, SubscribeError>>;
+type SubscribeResponder<Q> = oneshot::Sender<Result<Subscribed<Q>, SubscribeError>>;
 
-enum Command {
-    Subscribe {
-        namespace_trackname: NamespaceTrackname,
-        subscriber_priority: Option<u8>,
-        delivery_timeout: Option<u64>,
-        filter_type: FilterType,
-        responder: SubscribeResponder,
-    },
-    Unsubscribe {
-        request_id: RequestId,
-    },
+struct SubscribeCommand<Q: moq_core::DropQueue> {
+    namespace_trackname: NamespaceTrackname,
+    options: SubscribeOptions,
+    responder: SubscribeResponder<Q>,
 }
 
-/// A clonable, `Send`-free-to-share handle for calling `subscribe()`/
-/// `unsubscribe()` concurrently from multiple callers — e.g. several JS
-/// `await session.subscribe(...)` calls in flight at once. Each call just
-/// queues a command and awaits its own response; [`AsyncMoqSessionActor`]
-/// (the single task that actually owns the session) picks them up and drives
-/// them, so no caller needs `&mut` access to the session itself.
+/// A SUBSCRIBE awaiting its response.
+struct PendingSubscribe<Q: moq_core::DropQueue> {
+    subscription: Subscription<Q>,
+    responder: SubscribeResponder<Q>,
+}
+
+/// A clonable handle for calling `subscribe()` concurrently from multiple
+/// callers — e.g. several JS `await session.subscribe(...)` calls in flight
+/// at once. Each call just queues a command and awaits its own response;
+/// [`AsyncMoqSessionActor`] (the single task that actually owns the session)
+/// picks them up and drives them, so no caller needs `&mut` access to the
+/// session itself.
 pub struct AsyncMoqSessionHandle<T: AsyncTransport> {
-    commands: Arc<Mutex<Vec<Command>>>,
+    commands: Arc<Mutex<Vec<SubscribeCommand<T::DropQueue>>>>,
     wake: Notify,
-    // `Command` itself doesn't carry any `T`-typed data, but the type
-    // parameter is kept so a handle stays tied to the transport type of the
-    // session it actually talks to (e.g. `moq_tokio`'s and `moq_web`'s
-    // handles can't be mixed up even though they're structurally identical).
-    _transport: std::marker::PhantomData<fn() -> T>,
 }
 
 impl<T: AsyncTransport> Clone for AsyncMoqSessionHandle<T> {
     fn clone(&self) -> Self {
-        Self { commands: self.commands.clone(), wake: self.wake.clone(), _transport: std::marker::PhantomData }
+        Self { commands: self.commands.clone(), wake: self.wake.clone() }
     }
 }
 
@@ -58,28 +52,24 @@ impl<T: AsyncTransport> AsyncMoqSessionHandle<T> {
     pub async fn subscribe(
         &self,
         namespace_trackname: NamespaceTrackname,
-        subscriber_priority: Option<u8>,
-        delivery_timeout: Option<u64>,
-        filter_type: FilterType,
-    ) -> Result<Subscription, SubscribeError> {
+        options: SubscribeOptions,
+    ) -> Result<Subscribed<T::DropQueue>, SubscribeError> {
         let (tx, rx) = oneshot::channel();
-        self.commands.lock().unwrap().push(Command::Subscribe {
+        self.commands.lock().unwrap().push(SubscribeCommand {
             namespace_trackname,
-            subscriber_priority,
-            delivery_timeout,
-            filter_type,
+            options,
             responder: tx,
         });
         self.wake.notify();
         match rx.await {
             Ok(result) => result,
             // The actor was dropped before processing this command at all.
-            Err(oneshot::Canceled) => Err(SubscribeError::Unsubscribed),
+            Err(oneshot::Canceled) => Err(SubscribeError::SessionEnded),
         }
     }
 
-    pub fn unsubscribe(&self, request_id: RequestId) {
-        self.commands.lock().unwrap().push(Command::Unsubscribe { request_id });
+    /// Runs another cycle, e.g. to read a track left unread.
+    pub fn wake(&self) {
         self.wake.notify();
     }
 }
@@ -92,27 +82,32 @@ impl<T: AsyncTransport> AsyncMoqSessionHandle<T> {
 /// and services the command queue.
 pub struct AsyncMoqSessionActor<T: AsyncTransport> {
     session: AsyncMoqSession<T>,
-    commands: Arc<Mutex<Vec<Command>>>,
-    pending_subscribes: HashMap<RequestId, SubscribeResponder>,
+    commands: Arc<Mutex<Vec<SubscribeCommand<T::DropQueue>>>>,
+    pending_subscribes: HashMap<RequestId, PendingSubscribe<T::DropQueue>>,
+    events: VecDeque<Event<T::DropQueue>>,
 }
 
 impl<T: AsyncTransport> AsyncMoqSessionActor<T> {
     pub fn new(session: AsyncMoqSession<T>) -> (Self, AsyncMoqSessionHandle<T>) {
         let commands = Arc::new(Mutex::new(Vec::new()));
-        let handle =
-            AsyncMoqSessionHandle { commands: commands.clone(), wake: session.notifier(), _transport: std::marker::PhantomData };
-        (Self { session, commands, pending_subscribes: HashMap::new() }, handle)
+        let handle = AsyncMoqSessionHandle { commands: commands.clone(), wake: session.notifier() };
+        (Self { session, commands, pending_subscribes: HashMap::new(), events: VecDeque::new() }, handle)
     }
 
-    pub fn session(&self) -> &moq_core::session::MoqTransportSession {
+    pub fn session(&self) -> &MoqTransportSession<T::DropQueue> {
         self.session.session()
+    }
+
+    /// The next event not resolving a `subscribe()`, see `AsyncMoqSession::next_event`.
+    pub fn next_event(&mut self) -> Option<Event<T::DropQueue>> {
+        self.events.pop_front()
     }
 
     fn transport_mut(&mut self) -> &mut T {
         self.session.transport_mut()
     }
 
-    pub fn parts_mut(&mut self) -> (&mut moq_core::session::MoqTransportSession, &mut T) {
+    pub fn parts_mut(&mut self) -> (&mut MoqTransportSession<T::DropQueue>, &mut T) {
         self.session.parts_mut()
     }
 
@@ -120,50 +115,41 @@ impl<T: AsyncTransport> AsyncMoqSessionActor<T> {
         self.session.wait_for_wake().await;
     }
 
-    /// Drains and services queued commands (firing new SUBSCRIBEs, sending
-    /// UNSUBSCRIBEs), calls `handle()`, then resolves any subscribe
-    /// responses that arrived. Must be paired with `end_handle()` — see
-    /// `AsyncMoqSession::begin_handle()`'s doc comment for the same
-    /// dirty-flag contract, which applies here identically since this
-    /// wraps that method.
-    pub fn begin_handle(&mut self) -> PollResult {
+    /// Sends queued SUBSCRIBEs, calls `handle()`, then resolves the
+    /// subscribe responses that arrived. `end_handle()` flushes what follows.
+    pub fn begin_handle(&mut self) {
+        // dropping the subscription unsubscribes in `handle()` below
+        self.pending_subscribes.retain(|_, pending| !pending.responder.is_canceled());
         let commands = std::mem::take(&mut *self.commands.lock().unwrap());
-        for command in commands {
-            match command {
-                Command::Subscribe { namespace_trackname, subscriber_priority, delivery_timeout, filter_type, responder } => {
-                    match self.session.subscribe_request(&namespace_trackname, subscriber_priority, delivery_timeout, filter_type) {
-                        Ok(request_id) => {
-                            self.pending_subscribes.insert(request_id, responder);
-                        }
-                        Err(e) => {
-                            let _ = responder.send(Err(SubscribeError::Session(e)));
-                        }
-                    }
+        for SubscribeCommand { namespace_trackname, options, responder } in commands {
+            match self.session.subscribe_request(&namespace_trackname, options) {
+                Ok(subscription) => {
+                    self.pending_subscribes.insert(subscription.request_id(), PendingSubscribe { subscription, responder });
                 }
-                Command::Unsubscribe { request_id } => {
-                    self.session.unsubscribe(request_id);
-                    if let Some(responder) = self.pending_subscribes.remove(&request_id) {
-                        let _ = responder.send(Err(SubscribeError::Unsubscribed));
-                    }
+                Err(e) => {
+                    let _ = responder.send(Err(SubscribeError::Session(e)));
                 }
             }
         }
 
-        let result = self.session.begin_handle();
-
-        let pending_ids: Vec<RequestId> = self.pending_subscribes.keys().copied().collect();
-        for request_id in pending_ids {
-            if let Some(response) = self.session.session_mut().poll_subscribe_response(request_id) {
-                if let Some(responder) = self.pending_subscribes.remove(&request_id) {
-                    let _ = responder.send(match response {
-                        Ok((track_alias, _ok)) => Ok(Subscription { request_id, track_alias }),
-                        Err(e) => Err(SubscribeError::Rejected(e)),
-                    });
+        self.session.begin_handle();
+        while let Some(event) = self.session.next_event() {
+            let (request_id, response) = match event {
+                Event::SubscribeOk { request_id, track_alias, .. } if self.pending_subscribes.contains_key(&request_id) => (request_id, Ok(track_alias)),
+                Event::RequestFailed { request_id, failure: error } if self.pending_subscribes.contains_key(&request_id) => (request_id, Err(error)),
+                event => { self.events.push_back(event); continue }
+            };
+            let PendingSubscribe { subscription, responder } = self.pending_subscribes.remove(&request_id).unwrap();
+            let response = match response {
+                Ok(track_alias) => Ok(Subscribed { subscription, track_alias }),
+                Err(error) => {
+                    let (session, t) = self.session.parts_mut();
+                    session.unsubscribe(subscription, t);
+                    Err(SubscribeError::Rejected(error))
                 }
-            }
+            };
+            let _ = responder.send(response);
         }
-
-        result
     }
 
     /// Closes out the window `begin_handle()` opened and flushes queued sends.
@@ -171,49 +157,82 @@ impl<T: AsyncTransport> AsyncMoqSessionActor<T> {
         self.session.end_handle().await
     }
 
-    /// Waits for `notify()`, then drives one `begin_handle()`/`end_handle()`
-    /// cycle with nothing else in between.
-    pub async fn run_once(&mut self) -> Result<PollResult, T::FlushError> {
-        self.wait_for_wake().await;
-        let result = self.begin_handle();
-        self.end_handle().await?;
-        Ok(result)
-    }
-
-    /// Like `run_once()`, but also drains every readable track through a
-    /// [`BufferedTrack`] (creating one with `with_defaults` the first time a
-    /// track is seen) and calls `on_object` for each object completed this
-    /// cycle — the "wait, handle, read all tracks, end" shape `moq_web` and
-    /// `moq_tokio` both otherwise hand-roll identically. Callers that need
-    /// per-track state beyond reassembly (decode dispatch, per-track
-    /// channels) do that inside `on_object`; callers that need something
-    /// entirely different after `begin_handle()` (e.g. accepting incoming
-    /// subscriptions) should keep using `wait_for_wake()`/`begin_handle()`/
-    /// `end_handle()` directly instead of this.
-    pub async fn run_receive_cycle<F>(
+    /// One `begin_handle()`/`end_handle()` cycle of a subscriber after a wake, calling `on_readable` for every track with data to read, e.g. to
+    /// advance its [`crate::BufferedTrack`]. A track left unread stays readable. Other events are dropped, which
+    /// rejects the peer's requests.
+    pub async fn run_receive_cycle(
         &mut self,
-        tracks: &mut HashMap<TrackAlias, BufferedTrack>,
-        mut on_object: F,
-    ) -> Result<PollResult, T::FlushError>
-    where
-        F: FnMut(TrackAlias, CompleteObject),
-    {
+        mut on_readable: impl FnMut(TrackAlias, &mut MoqTransportSession<T::DropQueue>, &mut T),
+    ) -> Result<(), T::FlushError> {
         self.wait_for_wake().await;
-        let result = self.begin_handle();
+        self.begin_handle();
 
         let (session, t) = self.session.parts_mut();
-        // `readable()` returns an owned `SmallVec` (not borrowed from
-        // `session`), so iterating it directly doesn't hold any borrow of
-        // `session` across the loop body's `&mut session` use below.
+        // an owned `SmallVec`, no borrow of `session` across the loop
         for track_alias in session.readable() {
-            let track = tracks.entry(track_alias).or_insert_with(|| BufferedTrack::with_defaults(track_alias));
-            while let Some(obj) = track.poll_object(session, t) {
-                on_object(track_alias, obj);
-            }
+            on_readable(track_alias, session, t);
         }
+        self.events.clear();
 
         self.end_handle().await?;
         self.transport_mut().retire_finished_streams();
-        Ok(result)
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::convert::Infallible;
+
+    use futures::executor::block_on;
+    use moq_core::test_utils::{mock_transports, subscribe_response, MockTransport};
+    use moq_core::{Config, LocalDropQueue, MoqTransportSession, SubscribeOptions, Timestamp};
+
+    use super::AsyncMoqSessionActor;
+    use crate::notify::Notify;
+    use crate::session::AsyncMoqSession;
+    use crate::transport::AsyncTransport;
+
+    impl AsyncTransport for MockTransport {
+        type FlushError = Infallible;
+        type DropQueue = LocalDropQueue;
+        type ConnectParams = ();
+        type ConnectError = Infallible;
+
+        fn readable_stream_ids(&self) -> Vec<u64> {
+            self.readable_streams()
+        }
+
+        async fn flush_sends(&mut self) -> Result<(), Infallible> {
+            self.deliver();
+            Ok(())
+        }
+
+        async fn connect(_: ()) -> Result<(Self, Notify), Infallible> {
+            unreachable!("built by mock_transports")
+        }
+    }
+
+    #[test]
+    fn receive_cycle_rejects_the_peers_requests() {
+        let (client_t, mut server_t) = mock_transports();
+        let wake = Notify::new();
+        let (mut actor, _handle) = AsyncMoqSessionActor::new(AsyncMoqSession::connect(client_t, Config::default(), wake.clone()).unwrap());
+        let mut server = MoqTransportSession::accept(Config::default()).unwrap();
+        let cycle = |actor: &mut AsyncMoqSessionActor<MockTransport>, server: &mut MoqTransportSession, server_t: &mut MockTransport| {
+            wake.notify();
+            block_on(actor.run_receive_cycle(|_, _, _| {})).unwrap();
+            server.handle(server_t, &server_t.readable_streams(), Timestamp::default());
+            server_t.deliver();
+        };
+        cycle(&mut actor, &mut server, &mut server_t);
+        cycle(&mut actor, &mut server, &mut server_t);
+        assert!(actor.session().initialized());
+        let subscription = server.subscribe(&"n--t".parse().unwrap(), SubscribeOptions::default(), &mut server_t).unwrap();
+        server_t.deliver();
+        // the first drops the request, the second resolves the drop
+        cycle(&mut actor, &mut server, &mut server_t);
+        cycle(&mut actor, &mut server, &mut server_t);
+        assert!(matches!(subscribe_response(&mut server, subscription.request_id()), Some(Err(_))));
     }
 }

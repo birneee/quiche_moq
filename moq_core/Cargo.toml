@@ -2,17 +2,30 @@
 name = "moq_core"
 version = "0.1.0"
 edition = "2024"
+license.workspace = true
+description = "Sans-IO session state machine of Media over QUIC Transport (MoQT), drafts 7 to 19"
+readme = "README.md"
+repository.workspace = true
+keywords = ["moq", "quic", "media", "streaming", "webtransport"]
+categories = ["network-programming", "multimedia", "no-std"]
 
 [features]
-qlog = ["dep:qlog", "dep:serde_json", "moq_wire/qlog"]
+default = ["std"]
+# `Timestamp::now()`, `SharedDropQueue`
+std = ["dep:web-time"]
+qlog = ["std", "dep:qlog", "dep:serde_json", "moq_wire/qlog"]
+# in-memory `MockTransport`/`MockPipe` for other crates' tests
+test-utils = []
 
 [dependencies]
-octets = { workspace = true }
 moq_wire = { workspace = true }
-short_buf = { path = "../short_buf" }
+short_buf = { path = "../short_buf", version = "0.1.0" }
 log = { workspace = true }
 smallvec = { workspace = true }
-partial-borrow = "1.0.1"
-web-time = { workspace = true }
+hashbrown = "0.16"
+web-time = { workspace = true, optional = true }
 qlog = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
+
+[dev-dependencies]
+rstest = { workspace = true }

@@ -1,8 +1,8 @@
-/// Generic fragmented MP4 writer for LOC subscriber output.
-///
-/// Codec-agnostic: the stsd sample-entry body is taken verbatim from the LOC
-/// `VideoConfig` property (`[FourCC(4)][stsd entry body]`).  The FourCC determines
-/// the track type (video → vmhd, audio → smhd) and the handler name.
+//! Generic fragmented MP4 writer for LOC subscriber output.
+//!
+//! Codec-agnostic: the stsd sample-entry body is taken verbatim from the LOC
+//! `VideoConfig` property (`[FourCC(4)][stsd entry body]`).  The FourCC determines
+//! the track type (video → vmhd, audio → smhd) and the handler name.
 
 // ── public API ────────────────────────────────────────────────────────────────
 
@@ -291,4 +291,4 @@ fn put_u24(v: &mut Vec<u8>, n: u32) { v.extend_from_slice(&n.to_be_bytes()[1..])
 fn put_u16(v: &mut Vec<u8>, n: u16) { v.extend_from_slice(&n.to_be_bytes()); }
 fn put_u64(v: &mut Vec<u8>, n: u64) { v.extend_from_slice(&n.to_be_bytes()); }
 fn put_u8(v: &mut Vec<u8>, n: u8)   { v.push(n); }
-fn put_zeros(v: &mut Vec<u8>, n: usize) { v.extend(std::iter::repeat(0u8).take(n)); }
+fn put_zeros(v: &mut Vec<u8>, n: usize) { v.extend(std::iter::repeat_n(0u8, n)); }

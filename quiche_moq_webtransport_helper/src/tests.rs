@@ -1,5 +1,6 @@
+use quiche_moq::OutgoingObject;
 use std::io::Write;
-use quiche_moq::wire::control_message::subscribe::FilterType;
+use quiche_moq::SubscribeOptions;
 use std::thread;
 use boring::ssl::{SslContextBuilder, SslMethod};
 use boring::x509::store::X509StoreBuilder;
@@ -11,8 +12,8 @@ use quiche_mio_runner::quiche_endpoint::{Endpoint, EndpointConfig, ServerConfig}
 use quiche_mio_runner::{mio, Socket};
 use crate::MoqWebTransportHelper;
 use quiche_moq as moq;
-use quiche_moq::wire::{RequestId, TrackAlias};
-use quiche_moq::SubscriptionRequestAction;
+use quiche_moq::wire::{Location, TrackAlias};
+use quiche_moq::{Event, IncomingRequest, SubscribeOk};
 
 /// for client and server
 fn quic_config() -> (quiche::Config, quiche::Config) {
@@ -35,8 +36,8 @@ fn quic_config() -> (quiche::Config, quiche::Config) {
         {
             let mut c = quiche::Config::with_boring_ssl_ctx_builder(PROTOCOL_VERSION, {
                 let mut b = SslContextBuilder::new(SslMethod::tls()).unwrap();
-                b.set_private_key(&key).unwrap();
-                b.set_certificate(&cert).unwrap();
+                b.set_private_key(key).unwrap();
+                b.set_certificate(cert).unwrap();
                 b
             }).unwrap();
             MoqWebTransportHelper::configure_quic(&mut c);
@@ -56,53 +57,53 @@ fn handshake() {
     let cj = thread::spawn(move || {
         struct AppData {
             moq_helper: MoqWebTransportHelper,
-            subscribed: bool,
-            request_id: Option<RequestId>,
+            subscription: Option<moq::Subscription>,
             track_alias: Option<TrackAlias>,
             recv_obj_count: usize,
         }
         let socket = Socket::bind("127.0.0.0:0").unwrap();
         let mut r = Runner::new(
             {
-                let mut c = runner::Config::<AppData, (), ()>::default();
-                c.post_handle_recvs = |r| {
+                runner::Config::<AppData, (), ()> {
+                    post_handle_recvs: |r| {
                     'conn: for icid in &mut r.endpoint.conn_index_iter() {
                         let Some(conn) = r.endpoint.conn_mut(icid) else { continue };
                         conn.app_data.moq_helper.on_post_handle_recvs(&mut conn.conn);
                         let Some(mut moq) = conn.app_data.moq_helper.moq_handle(&mut conn.conn) else {
                             continue 'conn;
                         };
-                        if !conn.app_data.subscribed {
+                        if conn.app_data.subscription.is_none() {
                             let name = "meeting--video".parse().unwrap();
-                            conn.app_data.request_id = Some(moq.subscribe(&name, None, None, FilterType::NextGroupStart).unwrap());
+                            conn.app_data.subscription = Some(moq.session.subscribe(&name, SubscribeOptions { filter: quiche_moq::LocationFilter::NextGroupStart, ..Default::default() }, &mut moq.t).unwrap());
                             info!("subscribe {}", name);
-                            conn.app_data.subscribed = true;
                         }
-                        if let Some(request_id) = conn.app_data.request_id && let Some(resp) = moq.poll_subscribe_response(request_id) {
-                            conn.app_data.track_alias = Some(resp.unwrap().0)
+                        while let Some(event) = moq.session.next_event() {
+                            if let quiche_moq::Event::SubscribeOk { request_id, track_alias, .. } = event && conn.app_data.subscription.as_ref().is_some_and(|s| s.request_id() == request_id) {
+                                conn.app_data.track_alias = Some(track_alias);
+                            }
                         }
                         if let Some(track_alias) = conn.app_data.track_alias {
-                            let hdr = match moq.read_obj_hdr(track_alias) {
-                                Ok(v) => v,
+                            let (location, hdr) = match moq.session.recv_new_obj_hdr(track_alias, &mut moq.t) {
+                                Ok(quiche_moq::RecvObjHdr::Header { location, header, .. }) => (location, header),
+                                Ok(quiche_moq::RecvObjHdr::SubgroupFinished { .. } | quiche_moq::RecvObjHdr::SubgroupReset { .. } | quiche_moq::RecvObjHdr::Datagram { .. }) => {
+                                    continue;
+                                },
                                 Err(quiche_moq::Error::Done) => {
-                                    moq.post_handle();
                                     continue;
                                 },
                                 Err(e) => unimplemented!("{:?}", e),
                             };
                             let mut buf = [0u8; 100];
-                            let n = moq.read_obj_pld(&mut buf, track_alias).unwrap();
+                            let n = moq.session.recv_obj_pld(track_alias, location, &mut buf, &mut moq.t).unwrap();
                             assert_eq!(n, hdr.payload_len());
                             info!("recv obj: {}", str::from_utf8(&buf[..n]).unwrap());
                             conn.app_data.recv_obj_count += 1;
-                            moq.post_handle();
                             r.close()
-                        } else {
-                            moq.post_handle();
                         }
                     }
-                };
-                c
+                    },
+                    ..Default::default()
+                }
             },
             {
                 let mut e = Endpoint::new(None, EndpointConfig::default(), ());
@@ -113,8 +114,7 @@ fn handshake() {
                     &mut client_quic_config,
                     AppData {
                         moq_helper: MoqWebTransportHelper::new_client("https://example.org".parse().unwrap(), moq::Config::default()),
-                        subscribed: false,
-                        request_id: None,
+                        subscription: None,
                         track_alias: None,
                         recv_obj_count: 0,
                     },
@@ -133,11 +133,12 @@ fn handshake() {
     let sj = thread::spawn(move || {
         struct AppData {
             moq_helper: MoqWebTransportHelper,
+            publications: Vec<moq::Publication>,
         }
         let mut r = Runner::new(
             {
-                let mut c = runner::Config::<AppData, (), ()>::default();
-                c.post_handle_recvs = |r| {
+                runner::Config::<AppData, (), ()> {
+                    post_handle_recvs: |r| {
                     'conn: for icid in &mut r.endpoint.conn_index_iter() {
                         let Some(conn) = r.endpoint.conn_mut(icid) else { continue };
                         conn.app_data.moq_helper.on_post_handle_recvs(&mut conn.conn);
@@ -145,36 +146,36 @@ fn handshake() {
                             continue 'conn;
                         };
 
-                        let mut accepted: Vec<TrackAlias> = Vec::new();
-                        moq.process_subscription_requests(|_request_id, subscription, track_alias| {
-                            if subscription.namespace_trackname != "meeting--video".parse().unwrap() {
-                                unreachable!()
-                            }
-                            info!("accept track {}", subscription.namespace_trackname);
-                            accepted.push(track_alias);
-                            SubscriptionRequestAction::Accept
-                        });
-                        for track_alias in accepted {
+                        while let Some(Event::Request(IncomingRequest::Subscribe(request))) = moq.session.next_event() {
+                            let nt = request.message().namespace_trackname.clone();
+                            assert_eq!(nt, "meeting--video".parse().unwrap());
+                            info!("accept track {nt}");
+                            let publication = moq.session.accept_request(request, SubscribeOk::default(), &mut moq.t).unwrap();
+                            let track_alias = publication.track_alias();
+                            conn.app_data.publications.push(publication);
                             let buf = b"hello";
-                            moq.send_obj(buf, track_alias).unwrap();
+                            moq.session.send_obj_hdr(track_alias, OutgoingObject::new(Location { group: 0, object: 0 }, 0, buf.len()), &mut moq.t).unwrap();
+                            let n = moq.session.send_obj_pld(track_alias, Location { group: 0, object: 0 }, buf, &mut moq.t).unwrap();
+                            assert_eq!(n, buf.len());
                             info!("send obj: {}", str::from_utf8(buf).unwrap());
                         }
-                        moq.post_handle();
                     }
-                };
-                c
+                    },
+                    ..Default::default()
+                }
             },
             {
-                let e = Endpoint::new(Some({
+                
+                Endpoint::new(Some({
                     let mut c = ServerConfig::new(|_| {
                         AppData {
                             moq_helper: MoqWebTransportHelper::new_server(moq::Config::default()),
+                            publications: Vec::new(),
                         }
                     });
                     c.client_config = server_quic_config;
                     c
-                }), EndpointConfig::default(), ());
-                e
+                }), EndpointConfig::default(), ())
             },
         );
         r.register_socket(server_socket);
@@ -183,6 +184,6 @@ fn handshake() {
     });
     let recv_obj_count = cj.join().unwrap();
     assert_eq!(recv_obj_count, 1);
-    close_pipe_tx.write(&[0]).unwrap();
+    close_pipe_tx.write_all(&[0]).unwrap();
     sj.join().unwrap();
 }

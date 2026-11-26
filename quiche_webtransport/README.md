@@ -1,7 +1,7 @@
 # quiche_webtransport
 
-WebTransport-over-HTTP/3 session and stream handling on top of `quiche`'s H3
-connection: the extended-CONNECT handshake (client and server), WT stream
+WebTransport-over-HTTP/3 ([draft-ietf-webtrans-http3-16](https://datatracker.ietf.org/doc/draft-ietf-webtrans-http3/16/))
+session and stream handling on top of `quiche`'s H3 connection: the extended-CONNECT handshake (client and server), WT stream
 framing (bidi/uni, including the WebTransport stream-type prefix), and
 capsule-based session termination (`http_capsule`).
 

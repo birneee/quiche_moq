@@ -6,15 +6,15 @@
 
 mod actor;
 mod buffered_track;
+mod in_track;
 mod moq_session;
 mod notify;
 mod session;
-mod track;
 mod transport;
 
 pub use actor::{AsyncMoqSessionActor, AsyncMoqSessionHandle};
-pub use buffered_track::{BufferedTrack, CompleteObject};
-pub use moq_session::{ConnectError, MoqSession, MoqTrack};
+pub use buffered_track::{BufferedTrack, CompleteObject, TrackStats};
+pub use moq_session::{ConnectError, MoqSession, MoqTrack, TrackObjects};
 pub use notify::{Notified, Notify};
-pub use session::{AsyncMoqSession, SubscribeError, Subscription};
+pub use session::{AsyncMoqSession, SubscribeError, Subscribed};
 pub use transport::AsyncTransport;

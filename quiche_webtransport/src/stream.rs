@@ -9,16 +9,22 @@ pub struct Stream {
     stream_id: u64,
     pub session_id: Option<u64>,
     pub(crate) buf: ShortBuf<MAX_VARINT_LEN>,
+    /// h3 or `self.buf` might still have buffered data to read.
     pub(crate) readable: bool,
     /// quic reports that the stream is finished.
-    /// h3 or `self.buf` might still readable buffer data.
     pub quic_finished: bool,
-    /// true if stream is closed and no more data is buffered.
-    /// stream state can be removed.
-    finished: bool,
     /// whether the WebTransport session ID has been sent on the stream.
     /// always true for remote initialized streams.
     pub sent_session_id: bool,
+    /// Nothing more to send: FIN sent, reset, or a peer uni stream.
+    pub(crate) send_ended: bool,
+    /// Nothing more to read: ended, reset, reading stopped, or our uni stream.
+    pub(crate) recv_ended: bool,
+}
+
+/// QUIC stream id bit 1 (RFC 9000 §2.1).
+pub fn is_uni(stream_id: u64) -> bool {
+    stream_id & 0x2 != 0
 }
 
 impl Stream {
@@ -30,8 +36,9 @@ impl Stream {
             session_id: None,
             readable: false,
             quic_finished: false,
-            finished: false,
             sent_session_id: true,
+            send_ended: is_uni(stream_id),
+            recv_ended: false,
         }
     }
 
@@ -42,13 +49,15 @@ impl Stream {
             session_id: Some(session_id),
             readable: false,
             quic_finished: false,
-            finished: false,
             sent_session_id: false,
+            send_ended: false,
+            recv_ended: is_uni(stream_id),
         }
     }
 
     /// returns Done if the stream is not ready for the application to consume
     /// returns the session_id when the stream is ready
+    /// returns Fin if the stream ended before its session ID
     pub fn read_session_id<F: quiche::BufFactory>(
         &mut self,
         quic: &mut quiche::Connection<F>,
@@ -56,13 +65,14 @@ impl Stream {
     ) -> Result<u64> {
         Ok(match self.session_id {
             None => {
-                while self.buf.is_empty() {
+                let header_len = |buf: &[u8]| buf.first().map_or(1, |&b| varint_parse_len(b));
+                while self.buf.len() < header_len(self.buf.buffer()) {
+                    if self.quic_finished {
+                        return Err(Error::Fin);
+                    }
                     self.fill_buf(quic, h3)?;
                 }
-                let session_id_len = varint_parse_len(self.buf.buffer()[0]);
-                while self.buf.len() < session_id_len {
-                    self.fill_buf(quic, h3)?;
-                }
+                let session_id_len = header_len(self.buf.buffer());
                 let session_id = Octets::with_slice(&self.buf.buffer()[0..session_id_len])
                     .get_varint()
                     .unwrap();
@@ -74,28 +84,25 @@ impl Stream {
         })
     }
 
-    /// Fill internal buffer from h3 stream
+    /// Fill internal buffer from h3 stream, notes a FIN in `quic_finished`.
     /// Returns `Error::Done` when currently not data can be filled.
     pub(crate) fn fill_buf<F: quiche::BufFactory>(
         &mut self,
         quic: &mut quiche::Connection<F>,
-        _h3: &mut h3::Connection,
+        h3: &mut h3::Connection,
     ) -> Result<()> {
-        match self
-            .buf
-            .fill(|b| quic.stream_recv(self.stream_id, b).map(|v| v.0))
-        {
-            Ok(v) => Ok(v),
-            Err(quiche::Error::Done) => Err(Error::Done),
-            Err(e) => unimplemented!("{:?}", e),
-        }
+        let stream_id = self.stream_id;
+        let mut fin = false;
+        self.buf.fill(|b| h3.recv_webtransport_stream(quic, stream_id, b).map(|(len, f)| { fin = f; len }))?;
+        self.quic_finished |= fin;
+        Ok(())
     }
 
     // returns `Error::Fin` when stream has finished.
     // returns `Error::Done` when no more data can be read currently.
     pub(crate) fn recv<F: quiche::BufFactory>(
         &mut self,
-        _h3: &mut h3::Connection,
+        h3: &mut h3::Connection,
         quic: &mut quiche::Connection<F>,
         b: &mut [u8],
     ) -> Result<usize> {
@@ -104,7 +111,7 @@ impl Stream {
         }
         match self
             .buf
-            .chain_read2(|b| quic.stream_recv(self.stream_id, b).map(|v| v.0), b)
+            .chain_read2(|b| h3.recv_webtransport_stream(quic, self.stream_id, b).map(|v| v.0), b)
         {
             Ok(len) => {
                 if quic.stream_finished(self.stream_id) {
@@ -113,60 +120,62 @@ impl Stream {
                 Ok(len)
             }
             Err(e) => match e {
-                quiche::Error::InvalidStreamState(i) => {
+                h3::Error::TransportError(quiche::Error::InvalidStreamState(i)) => {
                     if self.quic_finished {
                         debug!("wt stream {} finished", self.stream_id);
-                        self.finished = true;
                         Err(Error::Fin)
                     } else {
                         Err(Error::InvalidStreamState(i))
                     }
                 }
-                quiche::Error::Done => {
+                h3::Error::Done => {
                     if self.quic_finished {
                         // FIN was already read (0 bytes + fin in a previous call);
                         // subsequent stream_recv returns Done — treat as Fin.
-                        self.finished = true;
                         Err(Error::Fin)
                     } else {
                         Err(Error::Done)
                     }
                 },
-                quiche::Error::StreamReset(i) => Err(Error::StreamReset(i)),
-                e => unimplemented!("{:?}", e),
+                e => Err(e.into()),
             },
         }
     }
 
     pub(crate) fn send<F: quiche::BufFactory>(
         &mut self,
+        h3: &mut h3::Connection,
         quic: &mut quiche::Connection<F>,
         buf: &[u8],
         fin: bool,
     ) -> Result<usize> {
-        if !self.sent_session_id {
-            let mut b = [0u8; MAX_VARINT_LEN];
-            let mut b = OctetsMut::with_slice(&mut b);
-            let b = b.put_varint(self.session_id.unwrap()).unwrap();
-            if quic.stream_capacity(self.stream_id).unwrap() < b.len() {
-                return Err(Error::Done);
-            }
-            let sent = quic.stream_send(self.stream_id, b, false).unwrap();
-            assert_eq!(b.len(), sent);
-            self.sent_session_id = true;
-        };
-        let sent = match quic.stream_send(self.stream_id, buf, fin) {
-            Ok(v) => v,
-            Err(quiche::Error::Done) => return Err(Error::Done),
-            Err(quiche::Error::StreamStopped(c)) => return Err(Error::StreamStopped(c)),
-            Err(e) => unimplemented!("{:?}", e),
-        };
-        Ok(sent)
+        self.send_session_id(h3, quic)?;
+        Ok(h3.send_webtransport_stream(quic, self.stream_id, buf, fin)?)
+    }
+
+    /// The Session ID after the stream type, once: right when the stream opens, so peers reading
+    /// the stream header from its first frame find it whole, else before the first data.
+    pub(crate) fn send_session_id<F: quiche::BufFactory>(&mut self, h3: &mut h3::Connection, quic: &mut quiche::Connection<F>) -> Result<()> {
+        if self.sent_session_id {
+            return Ok(());
+        }
+        let mut b = [0u8; MAX_VARINT_LEN];
+        let mut b = OctetsMut::with_slice(&mut b);
+        let b = b.put_varint(self.session_id.unwrap()).unwrap();
+        if quic.stream_capacity(self.stream_id)? < b.len() {
+            return Err(Error::Done);
+        }
+        let sent = h3.send_webtransport_stream(quic, self.stream_id, b, false)?;
+        // the capacity was checked
+        assert_eq!(b.len(), sent);
+        self.sent_session_id = true;
+        Ok(())
     }
 
     /// The buf will not sent partially.
     pub(crate) fn send_if_capacity<F: quiche::BufFactory>(
         &mut self,
+        h3: &mut h3::Connection,
         quic: &mut quiche::Connection<F>,
         buf: &[u8],
         fin: bool,
@@ -175,30 +184,15 @@ impl Stream {
         if capacity < buf.len() {
             return Err(Error::InsufficientCapacity);
         }
-        self.send(quic, buf, fin)?;
+        self.send(h3, quic, buf, fin)?;
         Ok(())
     }
 
-    pub fn readable(&self) -> bool {
-        self.readable
-    }
-
     pub fn capacity<F: quiche::BufFactory>(&self, quic: &mut quiche::Connection<F>) -> Result<usize> {
-        let mut capacity = match quic.stream_capacity(self.stream_id) {
-            Ok(v) => v,
-            Err(quiche::Error::StreamStopped(c)) => return Err(Error::StreamStopped(c)),
-            Err(e) => unimplemented!("{:?}", e),
-        };
-        if !self.sent_session_id {
-            let session_id_len = varint_len(self.session_id.unwrap());
-            capacity -= session_id_len
+        let capacity = quic.stream_capacity(self.stream_id)?;
+        if self.sent_session_id {
+            return Ok(capacity);
         }
-        Ok(capacity)
-    }
-
-    /// true if stream is closed and no more data is buffered.
-    /// stream state can be removed.
-    pub fn finished(&self) -> bool {
-        self.finished
+        Ok(capacity.saturating_sub(varint_len(self.session_id.unwrap())))
     }
 }

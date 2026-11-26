@@ -2,6 +2,11 @@
 name = "moq_object_cache"
 version = "0.1.0"
 edition = "2024"
+license.workspace = true
+description = "In-memory caches reassembling and storing MoQ objects by location"
+readme = "README.md"
+repository.workspace = true
+keywords = ["moq", "quic", "media", "streaming", "webtransport"]
 
 [dev-dependencies]
 rstest = { workspace = true }

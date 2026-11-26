@@ -2,6 +2,10 @@
 name = "quiche_endpoint_utils"
 version = "0.1.0"
 edition = "2024"
+license.workspace = true
+description = "Helpers for quiche_mio_runner endpoints: qlog setup and signal handling"
+readme = "README.md"
+repository.workspace = true
 
 [dependencies]
 quiche_mio_runner = { workspace = true }

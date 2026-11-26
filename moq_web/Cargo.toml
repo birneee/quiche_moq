@@ -2,6 +2,11 @@
 name = "moq_web"
 version = "0.1.0"
 edition = "2024"
+license.workspace = true
+description = "Browser MoQ subscriber on WebTransport and WebCodecs, in Rust and WASM"
+readme = "README.md"
+repository.workspace = true
+keywords = ["moq", "quic", "media", "streaming", "webtransport"]
 
 [lib]
 crate-type = ["cdylib"]
@@ -37,6 +42,7 @@ features = [
     "AudioScheduledSourceNode",
     "BaseAudioContext",
     "CanvasRenderingContext2d",
+    "CodecState",
     "Document",
     "EncodedAudioChunk",
     "EncodedAudioChunkInit",
@@ -60,7 +66,10 @@ features = [
     "VideoFrame",
     "WebTransport",
     "WebTransportBidirectionalStream",
+    "WebTransportCloseInfo",
     "WebTransportSendStream",
+    "WebTransportDatagramStats",
+    "WebTransportStats",
     "Window",
     "WritableStream",
     "WritableStreamDefaultWriter",

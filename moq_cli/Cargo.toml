@@ -2,6 +2,11 @@
 name = "moq-cli"
 version = "0.1.0"
 edition = "2024"
+license.workspace = true
+description = "A MoQ node: publish, subscribe, relay and route tracks over MoQ Transport"
+readme = "README.md"
+repository.workspace = true
+keywords = ["moq", "quic", "media", "streaming", "webtransport"]
 
 [[bin]]
 name = "moq"
@@ -16,6 +21,7 @@ libc = { workspace = true }
 mio = { workspace = true, features = ["os-ext"] }
 quiche_mio_runner = { workspace = true }
 quiche_moq = { workspace = true, features = ["qlog"] }
+moq_core = { workspace = true }
 moq_wire = { workspace = true }
 quiche_moq_webtransport_helper = { workspace = true }
 quiche_endpoint_utils = { workspace = true }
@@ -24,10 +30,14 @@ moq_loc = { workspace = true }
 moq_object_cache = { workspace = true }
 moq_pacing = { workspace = true }
 partial-borrow = "1.0.1"
-bytes = { workspace = true }
 boring = { workspace = true }
+# For the per-connection correlation event written in node/connections.rs's tick_connections.
+qlog = { workspace = true }
+serde_json = { workspace = true }
+rustc-hash = { workspace = true }
 
 [dev-dependencies]
+moq_core = { workspace = true, features = ["test-utils"] }
 tempfile = "3"
 serde_json = { workspace = true }
 rstest = { workspace = true }

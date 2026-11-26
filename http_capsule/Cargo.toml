@@ -2,6 +2,10 @@
 name = "http_capsule"
 version = "0.1.0"
 edition = "2024"
+license.workspace = true
+description = "The HTTP Capsule Protocol (RFC 9297)"
+readme = "README.md"
+repository.workspace = true
 
 [dependencies]
 octets = { workspace = true }

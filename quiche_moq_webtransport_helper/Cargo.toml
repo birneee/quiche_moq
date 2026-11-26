@@ -2,11 +2,16 @@
 name = "quiche_moq_webtransport_helper"
 version = "0.1.0"
 edition = "2024"
+license.workspace = true
+description = "Drives MoQ over WebTransport with quiche_moq and quiche_webtransport"
+readme = "README.md"
+repository.workspace = true
 
 [dependencies]
 log = {  workspace = true }
 url = { workspace = true }
 quiche = { workspace = true }
+moq_core = { workspace = true }
 quiche_moq = { workspace = true }
 quiche_webtransport = { workspace = true }
 quiche_h3_utils = { workspace = true }

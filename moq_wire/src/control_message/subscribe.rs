@@ -1,44 +1,58 @@
-use crate::bytes::{FromBytes, ToBytes};
-use crate::error::Error;
-use crate::vi64;
-use crate::{Namespace, NamespaceTrackname, Parameter, Parameters, RequestId, TrackAlias, Version, ABSOLUTE_RANGE_FILTER_ID, ABSOLUTE_START_FILTER_ID, DELIVERY_TIMEOUT_PARAMETER_ID, FORWARD_PARAMETER_ID, GROUP_ORDER_PARAMETER_ID, LARGEST_OBJECT_FILTER_ID, MAX_FULL_TRACK_NAME_LEN, MAX_TRACK_NAMESPACE_TUPLE_LENGTH, MIN_TRACK_NAMESPACE_TUPLE_LENGTH, MOQ_VERSION_DRAFT_07, MOQ_VERSION_DRAFT_10, MOQ_VERSION_DRAFT_11, MOQ_VERSION_DRAFT_12, MOQ_VERSION_DRAFT_14, MOQ_VERSION_DRAFT_15, MOQ_VERSION_DRAFT_18, NEXT_GROUP_START_FILTER_ID, SUBSCRIBER_PRIORITY_PARAMETER_ID, SUBSCRIBE_MESSAGE_ID, SUBSCRIPTION_FILTER_PARAMETER_ID};
-use octets::{Octets, OctetsMut};
-use crate::control_message::ControlMessage;
+use crate::prelude::*;
+use crate::bytes::{from_slice, to_vec, FromBytes, ToBytes};
+use crate::error::{Error, Result};
+use crate::control_message::{decode_request_id, encode_request_id, ControlMessage};
 use crate::location::Location;
-use crate::tuple::Tuple;
+use crate::range_filter::RangeFilters;
+use crate::message_parameters::{MessageParams, Param};
+use crate::{Frame, Mode, Reader, Writer};
+use crate::{GroupOrder, Namespace, NamespaceTrackname, RequestId, TrackAlias, Version};
+use crate::{
+    ABSOLUTE_RANGE_FILTER_ID, ABSOLUTE_START_FILTER_ID, DEFAULT_SUBSCRIBER_PRIORITY, LARGEST_OBJECT_FILTER_ID, MOQ_VERSION_DRAFT_11,
+    MOQ_VERSION_DRAFT_15, NEXT_GROUP_START_FILTER_ID, SUBSCRIBE_MESSAGE_ID,
+};
 
+/// SUBSCRIBE (draft-ietf-moq-transport-19 §10.7).
 #[derive(Debug, Eq, PartialEq)]
 pub struct SubscribeMessage {
     pub request_id: RequestId,
-    /// `Some` from draft 07 to draft 11
+    /// `Some` from draft 7 to draft 11, where the subscriber picks it
     pub track_alias: Option<TrackAlias>,
     pub namespace_trackname: NamespaceTrackname,
     pub subscriber_priority: u8,
-    pub group_order: u8,
-    /// `Some` from draft 11 to draft 13
-    pub forward: Option<u8>,
-    pub filter_type: FilterType,
-    pub start_location: Option<Location>,
-    pub end_group: Option<u64>,
-    pub parameters: Parameters,
+    /// `None` for the publisher's order
+    pub group_order: Option<GroupOrder>,
+    /// The Forward State, always forwarding before draft 11
+    pub forward: bool,
+    pub filter: LocationFilter,
+    /// OBJECT_DELIVERY_TIMEOUT in milliseconds
+    pub object_delivery_timeout: Option<u64>,
+    /// SUBGROUP_DELIVERY_TIMEOUT in milliseconds, draft 18 on
+    pub subgroup_delivery_timeout: Option<u64>,
+    /// RENDEZVOUS_TIMEOUT in milliseconds, draft 17 on
+    pub rendezvous_timeout: Option<u64>,
+    /// NEW_GROUP_REQUEST, draft 15 on
+    pub new_group_request: Option<u64>,
+    pub range_filters: RangeFilters,
 }
 
 impl SubscribeMessage {
-
-    /// length of the full track name including track namespaces and track name
-    pub fn full_track_name_len(&self) -> usize {
-        self.track_namespace().iter().map(|n| n.len()).sum::<usize>() + self.track_name().len()
-    }
-
-    pub fn validate(&self) -> crate::error::Result<()> {
-        if !(MIN_TRACK_NAMESPACE_TUPLE_LENGTH..=MAX_TRACK_NAMESPACE_TUPLE_LENGTH).contains(&self.track_namespace().len()) {
-            return Err(Error::ProtocolViolation(format!("Namespace tuple MUST be between {} and {}", MIN_TRACK_NAMESPACE_TUPLE_LENGTH, MAX_TRACK_NAMESPACE_TUPLE_LENGTH)))
+    /// Subscribing to `namespace_trackname` from the next group, with the spec's defaults.
+    pub fn new(request_id: RequestId, namespace_trackname: NamespaceTrackname) -> Self {
+        Self {
+            request_id,
+            track_alias: None,
+            namespace_trackname,
+            subscriber_priority: DEFAULT_SUBSCRIBER_PRIORITY,
+            group_order: None,
+            forward: true,
+            filter: LocationFilter::NextGroupStart,
+            object_delivery_timeout: None,
+            subgroup_delivery_timeout: None,
+            rendezvous_timeout: None,
+            new_group_request: None,
+            range_filters: RangeFilters::default(),
         }
-        if self.full_track_name_len() > MAX_FULL_TRACK_NAME_LEN {
-            return Err(Error::ProtocolViolation(format!("Full track name MUST not exceed {} bytes", MAX_FULL_TRACK_NAME_LEN)))
-        }
-
-        Ok(())
     }
 
     pub fn track_namespace(&self) -> &Namespace {
@@ -48,214 +62,257 @@ impl SubscribeMessage {
     pub fn track_name(&self) -> &[u8] {
         self.namespace_trackname.trackname()
     }
-
-    /// Returns the DELIVERY_TIMEOUT in milliseconds, if present in the parameters.
-    pub fn delivery_timeout(&self) -> Option<u64> {
-        self.parameters.get_varint(DELIVERY_TIMEOUT_PARAMETER_ID)
-    }
 }
+
 
 impl ControlMessage for SubscribeMessage {
     const MESSAGE_IDS: &'static [u64] = &[SUBSCRIBE_MESSAGE_ID];
 
     fn qlog_type_name(&self) -> &'static str { "subscribe" }
 
-    fn to_body_bytes(&self, b: &mut OctetsMut, version: Version) -> crate::error::Result<()> {
-        self.validate()?;
-        vi64::write_varint(b, self.request_id, version)?;
-        match version {
-            MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_11 => { vi64::write_varint(b, self.track_alias.unwrap(), version)?; },
-            MOQ_VERSION_DRAFT_12..=MOQ_VERSION_DRAFT_18 => {},
-            _ => unimplemented!()
-        };
-        vi64::write_varint(b, self.track_namespace().len() as u64, version)?;
-        for namespace in self.track_namespace() {
-            vi64::write_varint(b, namespace.len() as u64, version)?;
-            b.put_bytes(namespace)?;
+    fn to_body_bytes(&self, b: &mut Writer, version: Version) -> Result<()> {
+        encode_request_id(b, self.request_id, version)?;
+        if version.draft() <= 11 {
+            let alias = self.track_alias.ok_or(Error::Unencodable("SUBSCRIBE without the track alias of drafts 7 to 11"))?;
+            b.varint(alias.0)?;
         }
-        vi64::write_varint(b, self.track_name().len() as u64, version)?;
-        b.put_bytes(self.track_name())?;
-        // draft 15+ moved subscriber_priority/group_order/forward/filter out of
-        // the fixed fields and into Parameters (draft-16 §9.2.2.3-.5, .8).
+        self.namespace_trackname.to_bytes(b, version)?;
+        let mut params = MessageParams::new();
+        if let Some(ms) = self.object_delivery_timeout {
+            params.put_varint(Param::ObjectDeliveryTimeout, ms);
+        }
+        // hints a draft lacks are left out
+        for (param, value) in [
+            (Param::SubgroupDeliveryTimeout, self.subgroup_delivery_timeout),
+            (Param::RendezvousTimeout, self.rendezvous_timeout),
+            (Param::NewGroupRequest, self.new_group_request),
+        ] {
+            if let Some(v) = value && param.ty(version).is_some() {
+                params.put_varint(param, v);
+            }
+        }
+        self.range_filters.put(&mut params);
+        // fields until draft 14, parameters from draft 15 (draft-16 §9.2.2.3-.5, .8)
         if version < MOQ_VERSION_DRAFT_15 {
-            b.put_u8(self.subscriber_priority)?;
-            b.put_u8(self.group_order)?;
-            match version {
-                MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_10 => {},
-                MOQ_VERSION_DRAFT_11..=MOQ_VERSION_DRAFT_14 => { b.put_u8(self.forward.unwrap())?; },
-                _ => unreachable!()
+            b.u8(self.subscriber_priority);
+            b.u8(GroupOrder::requested_id(self.group_order));
+            if version >= MOQ_VERSION_DRAFT_11 {
+                b.u8(self.forward.into());
             }
-            self.filter_type.to_bytes(b, version)?;
-            if self.filter_type.has_start_location() {
-                self.start_location.as_ref().unwrap().to_bytes(b, version)?;
-            }
-            if self.filter_type.has_end_group() {
-                vi64::write_varint(b, self.end_group.unwrap(), version)?;
-            }
-            self.parameters.to_bytes(b, version)?;
+            self.filter.to_bytes(b, version)?;
         } else {
-            let mut params = vec![
-                Parameter::new_varint(SUBSCRIBER_PRIORITY_PARAMETER_ID, self.subscriber_priority as u64),
-                Parameter::new_varint(GROUP_ORDER_PARAMETER_ID, self.group_order as u64),
-            ];
-            if let Some(forward) = self.forward {
-                params.push(Parameter::new_varint(FORWARD_PARAMETER_ID, forward as u64));
+            params.put_u8(Param::SubscriberPriority, self.subscriber_priority);
+            params.put_u8(Param::Forward, self.forward.into());
+            params.put_bytes(Param::LocationFilter, to_vec(&self.filter, version)?);
+            if let Some(order) = self.group_order {
+                params.put_u8(Param::GroupOrder, order as u8);
             }
-            let mut filter_buf = [0u8; 64];
-            let filter_len = {
-                let mut fb = OctetsMut::with_slice(&mut filter_buf);
-                self.filter_type.to_bytes(&mut fb, version)?;
-                if self.filter_type.has_start_location() {
-                    self.start_location.as_ref().unwrap().to_bytes(&mut fb, version)?;
-                }
-                if self.filter_type.has_end_group() {
-                    vi64::write_varint(&mut fb, self.end_group.unwrap(), version)?;
-                }
-                fb.off()
-            };
-            params.push(Parameter::new_bytes(SUBSCRIPTION_FILTER_PARAMETER_ID, filter_buf[..filter_len].to_vec()));
-            params.extend(self.parameters.0.iter().cloned());
-            Parameters(params).to_bytes(b, version)?;
         }
-        Ok(())
+        params.to_bytes(b, version)
     }
 
-    fn from_body_bytes(b: &mut Octets, version: Version) -> crate::error::Result<Self> {
-        let request_id = vi64::read_varint(b, version)?;
-        let track_alias = match version {
-            MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_11 => Some(vi64::read_varint(b, version)?),
-            MOQ_VERSION_DRAFT_12..=MOQ_VERSION_DRAFT_18 => None,
-            _ => unimplemented!()
+    fn from_body_bytes(b: &mut Reader<'_, Frame>, version: Version) -> Result<Self> {
+        let request_id = decode_request_id(b, version)?;
+        let track_alias = match version.draft() {
+            ..=11 => Some(TrackAlias(b.varint()?)),
+            12.. => None,
         };
-        let track_namespace = Tuple::from_bytes(b, version)?.0;
-        let track_name_len = vi64::read_varint(b, version)?;
-        let track_name = b.get_bytes(track_name_len as usize)?.to_vec();
+        let namespace_trackname = NamespaceTrackname::from_bytes(b, version)?;
+        let mut message = Self { track_alias, ..Self::new(request_id, namespace_trackname) };
         if version < MOQ_VERSION_DRAFT_15 {
-            let subscriber_priority = b.get_u8()?;
-            let group_order = b.get_u8()?;
-            let forward = match version {
-                MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_10 => None,
-                MOQ_VERSION_DRAFT_11..=MOQ_VERSION_DRAFT_14 => Some(b.get_u8()?),
-                _ => unreachable!()
-            };
-            let filter_type = FilterType::from_bytes(b, version)?;
-            let start_location = if filter_type.has_start_location() {
-                Some(Location::from_bytes(b, version)?)
-            } else {
-                None
-            };
-            let end_group = if filter_type.has_end_group() {
-                Some(vi64::read_varint(b, version)?)
-            } else {
-                None
-            };
-            let parameters = Parameters::from_bytes(b, version)?;
-            Ok(Self {
-                request_id,
-                track_alias,
-                namespace_trackname: NamespaceTrackname::new(track_namespace, track_name),
-                subscriber_priority,
-                group_order,
-                forward,
-                filter_type,
-                start_location,
-                end_group,
-                parameters,
-            })
-        } else {
-            let parameters = Parameters::from_bytes(b, version)?;
-            let subscriber_priority = parameters.get_varint(SUBSCRIBER_PRIORITY_PARAMETER_ID).map(|v| v as u8).unwrap_or(128);
-            let group_order = parameters.get_varint(GROUP_ORDER_PARAMETER_ID).map(|v| v as u8).unwrap_or(2);
-            let forward = parameters.get_varint(FORWARD_PARAMETER_ID).map(|v| v as u8);
-            let (filter_type, start_location, end_group) = if let Some(filter_bytes) = parameters.get_bytes(SUBSCRIPTION_FILTER_PARAMETER_ID) {
-                let mut fb = Octets::with_slice(filter_bytes);
-                let filter_type = FilterType::from_bytes(&mut fb, version)?;
-                let start_location = if filter_type.has_start_location() {
-                    Some(Location::from_bytes(&mut fb, version)?)
-                } else {
-                    None
-                };
-                let end_group = if filter_type.has_end_group() {
-                    Some(vi64::read_varint(&mut fb, version)?)
-                } else {
-                    None
-                };
-                (filter_type, start_location, end_group)
-            } else {
-                // "If omitted from SUBSCRIBE ... the subscription is unfiltered" (§9.2.2.5)
-                // — modeled as the spec's own stated equivalent, AbsoluteStart{0, 0}
-                // (§5.1.2), since `FilterType` has no separate "unfiltered" variant.
-                (FilterType::AbsoluteStart, Some(Location { group: 0, object: 0 }), None)
-            };
-            let extra: Vec<Parameter> = parameters.0.into_iter()
-                .filter(|p| !matches!(p.ty, SUBSCRIBER_PRIORITY_PARAMETER_ID | GROUP_ORDER_PARAMETER_ID | FORWARD_PARAMETER_ID | SUBSCRIPTION_FILTER_PARAMETER_ID))
-                .collect();
-            Ok(Self {
-                request_id,
-                track_alias,
-                namespace_trackname: NamespaceTrackname::new(track_namespace, track_name),
-                subscriber_priority,
-                group_order,
-                forward,
-                filter_type,
-                start_location,
-                end_group,
-                parameters: Parameters(extra),
-            })
+            message.subscriber_priority = b.u8()?;
+            message.group_order = GroupOrder::from_requested(b.u8()?)?;
+            if version >= MOQ_VERSION_DRAFT_11 {
+                message.forward = forward_state(b.u8()?.into())?;
+            }
+            message.filter = LocationFilter::from_bytes(b, version)?;
         }
+        let mut params = MessageParams::from_bytes(b, version)?;
+        if version >= MOQ_VERSION_DRAFT_15 {
+            message.subscriber_priority = params.take_u8(Param::SubscriberPriority).unwrap_or(DEFAULT_SUBSCRIBER_PRIORITY);
+            message.group_order = params.take_u8(Param::GroupOrder).map(|order| GroupOrder::try_from(u64::from(order))).transpose()?;
+            message.forward = params.take_forward()?.unwrap_or(true);
+            // without one the subscription is unfiltered (§9.2.2.5), the same as AbsoluteStart at 0 (§5.1.2)
+            message.filter = params.take_bytes(Param::LocationFilter)
+                .map(|bytes| from_slice(&bytes, version))
+                .transpose()?
+                .unwrap_or(LocationFilter::AbsoluteStart { start: Location { group: 0, object: 0 } });
+        }
+        message.object_delivery_timeout = params.take_varint(Param::ObjectDeliveryTimeout);
+        message.subgroup_delivery_timeout = params.take_varint(Param::SubgroupDeliveryTimeout);
+        message.rendezvous_timeout = params.take_varint(Param::RendezvousTimeout);
+        message.new_group_request = params.take_varint(Param::NewGroupRequest);
+        message.range_filters = RangeFilters::take(&mut params);
+        // TODO authorization, until then tokens are ignored
+        params.take_all_bytes(Param::AuthorizationToken);
+        params.finish(version)?;
+        Ok(message)
     }
 }
 
+/// Where a subscription starts and ends (draft-ietf-moq-transport-16 §5.1.2).
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum FilterType {
-    LargestObject,
+pub enum LocationFilter {
     NextGroupStart,
-    AbsoluteStart,
-    AbsoluteRange,
+    LargestObject,
+    AbsoluteStart { start: Location },
+    AbsoluteRange { start: Location, end_group: u64 },
 }
 
-impl FilterType {
-    pub fn has_start_location(&self) -> bool {
+impl LocationFilter {
+    /// The Filter Type, e.g. for qlog.
+    pub fn wire_id(&self) -> u64 {
         match self {
-            FilterType::LargestObject => false,
-            FilterType::NextGroupStart => false,
-            FilterType::AbsoluteStart => true,
-            FilterType::AbsoluteRange => true,
+            Self::NextGroupStart => NEXT_GROUP_START_FILTER_ID,
+            Self::LargestObject => LARGEST_OBJECT_FILTER_ID,
+            Self::AbsoluteStart { .. } => ABSOLUTE_START_FILTER_ID,
+            Self::AbsoluteRange { .. } => ABSOLUTE_RANGE_FILTER_ID,
         }
     }
 
-    pub fn has_end_group(&self) -> bool {
+    pub fn start_location(&self) -> Option<Location> {
+        match *self {
+            Self::AbsoluteStart { start } | Self::AbsoluteRange { start, .. } => Some(start),
+            Self::NextGroupStart | Self::LargestObject => None,
+        }
+    }
+
+    pub fn end_group(&self) -> Option<u64> {
+        match *self {
+            Self::AbsoluteRange { end_group, .. } => Some(end_group),
+            _ => None,
+        }
+    }
+
+    /// The SUBSCRIPTION_FILTER parameter's bytes.
+    pub fn encode(&self, version: Version) -> Result<Vec<u8>> {
+        to_vec(self, version)
+    }
+
+    /// From the SUBSCRIPTION_FILTER parameter's bytes.
+    pub fn decode(bytes: &[u8], version: Version) -> Result<Self> {
+        from_slice(bytes, version)
+    }
+}
+
+impl LocationFilter {
+    /// The absolute filter a relative one is once SUBSCRIBE_OK or PUBLISH named the Largest Object,
+    /// from `{0, 0}` without one (draft-ietf-moq-transport-14 §5.1.2). Before draft 11 type 1 is
+    /// Latest Group, from the Largest Object's group, and Latest Object starts after it as later.
+    pub fn resolved(self, largest: Option<Location>, version: Version) -> Self {
+        let start = |from_largest: fn(Location) -> Location| largest.map_or(Location { group: 0, object: 0 }, from_largest);
         match self {
-            FilterType::LargestObject => false,
-            FilterType::NextGroupStart => false,
-            FilterType::AbsoluteStart => false,
-            FilterType::AbsoluteRange => true,
+            Self::LargestObject => Self::AbsoluteStart { start: start(Location::next) },
+            Self::NextGroupStart if version.draft() <= 10 => Self::AbsoluteStart { start: start(|l| Location { group: l.group, object: 0 }) },
+            Self::NextGroupStart => Self::AbsoluteStart { start: start(|l| Location { group: l.group + 1, object: 0 }) },
+            absolute => absolute,
         }
     }
 }
 
-impl ToBytes for FilterType {
-    fn to_bytes(&self, b: &mut OctetsMut, version: Version) -> crate::error::Result<()> {
-        let id = match self {
-            FilterType::LargestObject => LARGEST_OBJECT_FILTER_ID,
-            FilterType::NextGroupStart => NEXT_GROUP_START_FILTER_ID,
-            FilterType::AbsoluteStart => ABSOLUTE_START_FILTER_ID,
-            FilterType::AbsoluteRange => ABSOLUTE_RANGE_FILTER_ID,
-        };
-        vi64::write_varint(b, id, version)?;
-        Ok(())
-    }
-}
-
-impl FromBytes for FilterType {
-    fn from_bytes(b: &mut Octets, version: Version) -> crate::error::Result<Self> {
-        let ty = vi64::read_varint(b, version)?;
-        Ok(match ty {
+impl FromBytes for LocationFilter {
+    fn from_bytes<M: Mode>(r: &mut Reader<'_, M>, version: Version) -> Result<Self> {
+        Ok(match r.varint()? {
             NEXT_GROUP_START_FILTER_ID => Self::NextGroupStart,
             LARGEST_OBJECT_FILTER_ID => Self::LargestObject,
-            ABSOLUTE_START_FILTER_ID => Self::AbsoluteStart,
-            ABSOLUTE_RANGE_FILTER_ID => Self::AbsoluteRange,
-            _ => unimplemented!()
+            ABSOLUTE_START_FILTER_ID => Self::AbsoluteStart { start: Location::from_bytes(r, version)? },
+            ABSOLUTE_RANGE_FILTER_ID => Self::AbsoluteRange { start: Location::from_bytes(r, version)?, end_group: r.varint()? },
+            ty => return Err(Error::ProtocolViolation(format!("unknown filter type {ty}"))),
         })
+    }
+}
+
+impl ToBytes for LocationFilter {
+    fn to_bytes(&self, w: &mut Writer, version: Version) -> Result<()> {
+        w.varint(self.wire_id())?;
+        if let Some(start) = self.start_location() {
+            start.to_bytes(w, version)?;
+        }
+        if let Some(end_group) = self.end_group() {
+            w.varint(end_group)?;
+        }
+        Ok(())
+    }
+}
+
+/// The Forward State: 0 or 1 (draft-ietf-moq-transport-16 §9.2.2.8).
+pub(crate) fn forward_state(v: u64) -> Result<bool> {
+    match v {
+        0 => Ok(false),
+        1 => Ok(true),
+        _ => Err(Error::ProtocolViolation(format!("FORWARD {v}"))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{MOQ_VERSION_DRAFT_14, MOQ_VERSION_DRAFT_16};
+    use rstest::rstest;
+
+    #[rstest]
+    #[case(LocationFilter::NextGroupStart)]
+    #[case(LocationFilter::LargestObject)]
+    #[case(LocationFilter::AbsoluteStart { start: Location { group: 3, object: 7 } })]
+    #[case(LocationFilter::AbsoluteRange { start: Location { group: 3, object: 7 }, end_group: 12 })]
+    fn filter_round_trips(#[case] filter: LocationFilter) {
+        let bytes = filter.encode(MOQ_VERSION_DRAFT_16).unwrap();
+        assert_eq!(LocationFilter::decode(&bytes, MOQ_VERSION_DRAFT_16).unwrap(), filter);
+    }
+
+    #[test]
+    fn unknown_filter_type_is_protocol_violation() {
+        let decoded = LocationFilter::decode(&[0x3f], MOQ_VERSION_DRAFT_16);
+        assert!(matches!(decoded, Err(Error::ProtocolViolation(_))), "{decoded:?}");
+    }
+
+    fn subscribe(version: Version) -> SubscribeMessage {
+        SubscribeMessage {
+            track_alias: (version.draft() <= 11).then_some(TrackAlias(2)),
+            subscriber_priority: 7,
+            group_order: Some(GroupOrder::Descending),
+            forward: false,
+            filter: LocationFilter::AbsoluteRange { start: Location { group: 1, object: 2 }, end_group: 3 },
+            object_delivery_timeout: Some(100),
+            ..SubscribeMessage::new(RequestId(2), "n--t".parse().unwrap())
+        }
+    }
+
+    #[rstest]
+    #[case(MOQ_VERSION_DRAFT_14)]
+    #[case(MOQ_VERSION_DRAFT_16)]
+    #[case(crate::MOQ_VERSION_DRAFT_18)]
+    fn subscribe_round_trips(#[case] version: Version) {
+        let bytes = to_vec(&subscribe(version), version).unwrap();
+        assert_eq!(from_slice::<SubscribeMessage>(&bytes, version).unwrap(), subscribe(version));
+    }
+
+    /// A draft 16 SUBSCRIBE for request 2 of `n--t` with `params`.
+    fn draft_16_subscribe(params: &[u8]) -> Result<SubscribeMessage> {
+        let body = [&[2, 1, 1, b'n', 1, b't'][..], params].concat();
+        let bytes = [&[0x03, 0, body.len() as u8][..], &body].concat();
+        from_slice(&bytes, MOQ_VERSION_DRAFT_16)
+    }
+
+    /// draft-ietf-moq-transport-16 §9.2.2.4: only 1 and 2, omitted is the publisher's order.
+    #[test]
+    fn group_order_parameter() {
+        assert_eq!(draft_16_subscribe(&[0]).unwrap().group_order, None);
+        assert_eq!(draft_16_subscribe(&[1, 0x22, 2]).unwrap().group_order, Some(GroupOrder::Descending));
+        assert!(matches!(draft_16_subscribe(&[1, 0x22, 0]), Err(Error::ProtocolViolation(_))));
+    }
+
+    #[test]
+    fn forward_over_1_is_protocol_violation() {
+        assert!(matches!(draft_16_subscribe(&[1, 0x10, 2]), Err(Error::ProtocolViolation(_))));
+    }
+
+    /// Range filters change which objects arrive, older drafts can't express them.
+    #[test]
+    fn range_filters_need_draft_19() {
+        let mut params = MessageParams::new();
+        params.put_bytes(Param::SubgroupFilter, vec![0]);
+        let subscribe = SubscribeMessage { range_filters: RangeFilters::take(&mut params), ..subscribe(MOQ_VERSION_DRAFT_16) };
+        assert!(matches!(to_vec(&subscribe, MOQ_VERSION_DRAFT_16), Err(Error::Unsupported(_))));
     }
 }

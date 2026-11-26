@@ -5,6 +5,10 @@ pub struct Session {
     /// (draft-ietf-webtrans-http3 §3.3), if any — `None` if either side
     /// didn't participate in that negotiation.
     negotiated_protocol: Option<String>,
+    /// capsules arriving on the CONNECT stream
+    pub(crate) capsules: http_capsule::Decoder,
+    /// error code and message of the peer's WT_CLOSE_SESSION
+    pub(crate) peer_close: Option<(u32, String)>,
 }
 
 #[allow(unused)]
@@ -20,6 +24,8 @@ impl Session {
         Self {
             state: State::Pending,
             negotiated_protocol,
+            capsules: http_capsule::Decoder::new(4 + crate::connection::MAX_CLOSE_MESSAGE_LEN),
+            peer_close: None,
         }
     }
 
@@ -27,6 +33,8 @@ impl Session {
         Self {
             state: State::Established,
             negotiated_protocol,
+            capsules: http_capsule::Decoder::new(4 + crate::connection::MAX_CLOSE_MESSAGE_LEN),
+            peer_close: None,
         }
     }
 

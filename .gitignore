@@ -1,8 +1,13 @@
 /.direnv
 /.idea
-/.rust-toolchain
+.rust-toolchain
 /result
 /target
 *.sqlog
 /drafts
 /.vscode
+/CLAUDE.md
+.claude
+/qlog
+# nixnet experiment runs, see experiments/
+out/

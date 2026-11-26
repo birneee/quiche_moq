@@ -1,0 +1,130 @@
+{
+  "ghcr.io/endel/quic-zig-moq-client:latest": {
+    "digest": "sha256:55e2503a8704f934fe3e425aba07076ed1dd012a826d25d8866f85bd730aee65",
+    "hash": "sha256-tuWb0mOUBcN5Eaz2v52BEt6k+fB6JSDtUowG21TsC5s="
+  },
+  "ghcr.io/endel/quic-zig-moq-relay:latest": {
+    "digest": "sha256:10e01655343680718221c0d23fb795042362a6e25d7f6c253983f58058c13633",
+    "hash": "sha256-PxQwdoTpFeZJ0j2RXQp/046FruQv/482GFdkO79rXYY="
+  },
+  "ghcr.io/englishm/moq-interop-runner-imquic-moq-interop-test:latest": {
+    "digest": "sha256:bb9456e36412399c6706dc1840cd48573bdc4bc50ae39db8020562183f656d77",
+    "hash": "sha256-o3tE3meG9WIetOfu3O0bVDM83lScIlCgBkHoY/F08e4="
+  },
+  "ghcr.io/englishm/moq-interop-runner-imquic-moq-relay:latest": {
+    "digest": "sha256:931cfbc26d33bf793976d75e9381e39375c875d0580071ee1cd4f4c4595988d7",
+    "hash": "sha256-l714nAZHwjX8csqyLExlF0QMsdawcwkNmhxsTJvGEU4="
+  },
+  "ghcr.io/englishm/moq-interop-runner-moq-dev-js-client:latest": {
+    "digest": "sha256:de263d90e73dafb6f4cda40ddfa42f713bbaaf519f28c838a53360f3f2210d65",
+    "hash": "sha256-V+Aww4/Uhi2F7eiYOG265A41aKGGjl3sxZMPouLAhtI="
+  },
+  "ghcr.io/englishm/moq-interop-runner-moq-dev-rs-client:latest": {
+    "digest": "sha256:0e2691bcc52c6e2934abc6ef5f80cc47ca6084a4fb97225678dfcb92d433c55b",
+    "hash": "sha256-rdtOYjRpkF/F2RVEndO+2L21qjoO3ZY5gjbUuRkmBdM="
+  },
+  "ghcr.io/englishm/moq-interop-runner-moq-go-client:latest": {
+    "digest": "sha256:fa942cf1cdc015e649d9cb1be45aa44d2e29876d1942b07338c570098948a2f2",
+    "hash": "sha256-11DIPWpBGMeRdgr3JEcNp6II9SZbSUGholxILrVc9PQ="
+  },
+  "ghcr.io/englishm/moq-interop-runner-moq-go-relay:latest": {
+    "digest": "sha256:7fd67cd8e91323a3820f65652a001a37f73a33983f04eac70b0a54a46e00745f",
+    "hash": "sha256-cZ4nbZy5wHlg2SwFG86WhCn4R52x+Yx5Z8Etl/gFMbs="
+  },
+  "ghcr.io/englishm/moq-interop-runner-moq-net-media-ts-client:latest": {
+    "digest": "sha256:13c79380fe9de61dca63d25230491bd528d8976bacc1531f61d957eb6770477f",
+    "hash": "sha256-0fOm9FyZe7G3qonBjLIZS0NhidNmdRnS0HX6Bqx3wmU="
+  },
+  "ghcr.io/englishm/moq-interop-runner-moq-relay-ietf-draft-14:latest": {
+    "digest": "sha256:4c6c01b9539aa85378afd6bc1bfdc0e12a4cdf81cd236374db58c20907386a31",
+    "hash": "sha256-cvLRrjnDF4GkflkxTnKUIemVyMYmN1T6BZ+vvgAvDko="
+  },
+  "ghcr.io/englishm/moq-interop-runner-moq-relay-ietf-draft-18:latest": {
+    "digest": "sha256:584ecba7737ad088480c8f307d26ac43ac3dbd9c903977835f9fe25ab9f55fbc",
+    "hash": "sha256-e1cR05kiWAk+OeAngopzVUR9jpFexsXXQ+AKLVn7/ss="
+  },
+  "ghcr.io/englishm/moq-interop-runner-moq-relay-ietf:latest": {
+    "digest": "sha256:f360b180c9532385c23ef1f7ef01162e915326463e1d50c1c51a3d436621ddc2",
+    "hash": "sha256-Olj7XB4nyTfK8ztD8wp/e2yKSZnOb/tsjcyRMbGuk0U="
+  },
+  "ghcr.io/englishm/moq-interop-runner-moq-test-client-draft-14:latest": {
+    "digest": "sha256:0e1c2314c9de3756f110dcd0598cfd80036b67ed29736539a20a38c6d1f640bd",
+    "hash": "sha256-uqNdPVzx6qhm3WLSqtxhDDKmO+kn5HbAsEAHpmv+dho="
+  },
+  "ghcr.io/englishm/moq-interop-runner-moq-test-client-draft-18:latest": {
+    "digest": "sha256:39f323ad66e496c8170bbb6f4305b4097afefd11de60a3adc77adb967f8b95e7",
+    "hash": "sha256-12vQJkhfV7WHjJ2Ja8ANC7iFQRhVAFKWMtgRbw1tM8s="
+  },
+  "ghcr.io/englishm/moq-interop-runner-moq-test-client:latest": {
+    "digest": "sha256:5cefe8542ed28db3cd750fb40ecdf44ea904235f19c7f31c7648322e2b5560f0",
+    "hash": "sha256-xOa8KvwjbOpNlVLIleBSt4ZJ6T9C1nDR1HkQmuuIQzk="
+  },
+  "ghcr.io/englishm/moq-interop-runner-moqtopus-interop-client:latest": {
+    "digest": "sha256:ebf15ea177740b24694e9f449c22dbbeee7d3495fb1e94f38bd61d5b56efb04e",
+    "hash": "sha256-GHCOt3pCcgK10wJ2tUhclcPfGYvSpYal7JB6RtFghpg="
+  },
+  "ghcr.io/englishm/moq-interop-runner-quiche-moq-relay:latest": {
+    "digest": "sha256:9d3fb6946dea1f8dd4d125a26fbd7ed87cdab00decc0560a29814b3850cf3a08",
+    "hash": "sha256-APvpq8PWi10lYl+w9dzQNx8sFWhCidqgiCHmgTHNM9w="
+  },
+  "ghcr.io/englishm/moq-interop-runner-stitcher-moq-client:latest": {
+    "digest": "sha256:f79581e54e7c57bccb92701875098e73baa2cf19e1772b5e4f66cb96631961f1",
+    "hash": "sha256-6H4aCjebQUdMNrXn3flB6Jbk6HFb1Rpf/RxEwAFwJJg="
+  },
+  "ghcr.io/englishm/moq-interop-runner-stitcher-moq-media-client:latest": {
+    "digest": "sha256:0fd8b070558b8f975b979674d25dadf18126d3d393ae1526816737b4a2e86ec0",
+    "hash": "sha256-XMrkA3y343L9IRVu7H68a/aHuPcW4Ey8vDqA1AQrHBE="
+  },
+  "ghcr.io/englishm/moq-interop-runner-xquic-client:latest": {
+    "digest": "sha256:d207a1c81c74b4aa03148e130b827ef809ec27780a941b521d3b7d8d14afbc01",
+    "hash": "sha256-L+L7Y0TiPqnF3q7iUEOv++Pf63MvZ38ZFLVhE0C6JBM="
+  },
+  "ghcr.io/englishm/moq-interop-runner-xquic-relay:latest": {
+    "digest": "sha256:8a2be1b40564cce508a37114797e1ffd7a7980af9c71424b0830da5d3c6a7f7d",
+    "hash": "sha256-KRYHwFgcORR2E22TsiVt6GAkF8bAZRruo6vYyq93Fg4="
+  },
+  "ghcr.io/eyevinn/mlmrel:latest": {
+    "digest": "sha256:a4064de3acaa0a6dd7fc770882353dccc57a410f566ddd4416669068fc7a1066",
+    "hash": "sha256-6K6Lvu+DC0Gtx5O5MoDzC+lJHSVxIiEqXrgpbJuXAVs="
+  },
+  "ghcr.io/eyevinn/mlmtest:latest": {
+    "digest": "sha256:17d58a73685a90b558e6234280e24c584e451e361bb74e667a8b5a35d76683c6",
+    "hash": "sha256-nbJl4g456NBYPrGnqab8KWY10hhLJgBMCNEj2nMW8+A="
+  },
+  "ghcr.io/facebookexperimental/moqrelay:latest-amd64": {
+    "digest": "sha256:18bad2a9a9e7a69e03a99bd5062d6f3b3398e19a37ddb53b17687cbdff30649c",
+    "hash": "sha256-bswU2dxD2q6QrATZo8RRR7NZLf+yiyU4X9ohs4SESnE="
+  },
+  "ghcr.io/facebookexperimental/moxygen-interop-client:latest-amd64": {
+    "digest": "sha256:60571955ccc09fb847d8fecefcfa3ed83d4bd4ecc3beb594871daf9dd0a3686d",
+    "hash": "sha256-T8QpCwhaL5+aJLqsAFSLd5EBmWKpyEl+sor8kQMHaM0="
+  },
+  "ghcr.io/gmarzot/aiomoqt:interop": {
+    "digest": "sha256:bf9f92d015c01547dcd616f59394fcf2dd51229229084a85121a8755d7bd6dae",
+    "hash": "sha256-z1LYabO1WDO+/gHD6XZQknkvD56iRGecw+fPR/yrmi0="
+  },
+  "ghcr.io/ojii3/moq-mbt-interop-client:latest": {
+    "digest": "sha256:37f0260dfb83d0122744ec3a638418570ca05102519d8429b536b53c2cef6b11",
+    "hash": "sha256-7glPtxrrnv4AvTn17cEeHPj7oWWl/jqCRcXkBajOB/g="
+  },
+  "ghcr.io/openmoq/moq5-interop-client:latest": {
+    "digest": "sha256:c2e945c89f414fb4007ac5d1ea2beea20e51c63d3e7cefe2b188a911c7a945cc",
+    "hash": "sha256-7LX+IrGzAmVJ+q/EiBWGEtm3Wb4nflLickhbbc/xR+0="
+  },
+  "ghcr.io/openmoq/moq-playa-interop-client:latest": {
+    "digest": "sha256:e7efdec17ffe4d3a5280a51110cebc6fa78205656d42dde068299b3d7deda177",
+    "hash": "sha256-0I92WwmucKcakg3Zna7YvnL+G7PEuqda/KLLYKsLRng="
+  },
+  "ghcr.io/openmoq/moqx-interop-client:latest": {
+    "digest": "sha256:7799b3ba5c574ac4c88610a210d500c303a7c2d3058c6334c1dbb90206174d9d",
+    "hash": "sha256-NCGk+9P8gjfbQ811dHw+nylax3df0VHsN6k1Q9lIZuQ="
+  },
+  "ghcr.io/openmoq/moqx:latest": {
+    "digest": "sha256:f9a31e28c1f93147e8275cbbfc0a23ab006941bfee9bc0833020dea026395eb1",
+    "hash": "sha256-W6MpGRpGXmzmdeLurAnk1sdFyZp9PvOi2ZG0tYSUMp8="
+  },
+  "docker.io/moqdev/moq-relay:latest": {
+    "digest": "sha256:522e8b762c9998d246d32f65456c91c0950b1dc228c15fb402e792bff999d0d9",
+    "hash": "sha256-sLH0YCeFNz1w1btZ+DqhHARIZPCxNCnfnXyAT37JrV8="
+  }
+}

@@ -1,6 +1,6 @@
 use criterion::{Criterion, criterion_group, criterion_main};
-use moq_object_cache::{Level, LevelSlotObjectCache, ObjectCache, PackedObjectCache, SlotObjectCache};
-use moq_wire::{KeyValuePairs, Location};
+use moq_object_cache::{Level, LevelSlotObjectCache, NewObject, ObjectCache, PackedObjectCache, SlotObjectCache};
+use moq_wire::Location;
 
 fn loc(group: u64, object: u64) -> Location {
     Location { group, object }
@@ -8,7 +8,7 @@ fn loc(group: u64, object: u64) -> Location {
 
 fn write_object(cache: &mut dyn ObjectCache, seq: u64, payload_len: usize) {
     let l = loc(seq / 256, seq % 256);
-    cache.begin(l, KeyValuePairs::new(), payload_len).ok();
+    cache.begin(NewObject::new(l, payload_len)).ok();
     if let Some(mut obj) = cache.latest_mut() {
         let buf = obj.unfilled();
         buf.fill(0xAB);
@@ -83,7 +83,7 @@ fn bench_steady_state(c: &mut Criterion) {
         const MAX_OBJ: usize = I_FRAME;
         const AVG_SIZE: usize = (I_FRAME + 29 * P_FRAME) / 30;
         let pattern: Vec<usize> = std::iter::once(I_FRAME)
-            .chain(std::iter::repeat(P_FRAME).take(29))
+            .chain(std::iter::repeat_n(P_FRAME, 29))
             .collect();
 
         let mut group = c.benchmark_group("steady_state_video");

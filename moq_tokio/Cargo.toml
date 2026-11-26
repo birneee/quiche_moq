@@ -2,6 +2,11 @@
 name = "moq_tokio"
 version = "0.1.0"
 edition = "2024"
+license.workspace = true
+description = "MoQ over WebTransport client and server on tokio and tokio-quiche"
+readme = "README.md"
+repository.workspace = true
+keywords = ["moq", "quic", "media", "streaming", "webtransport"]
 
 [dependencies]
 moq_core = { workspace = true }

@@ -13,4 +13,5 @@ draft=16
 moq --connect "https://draft-${draft}.cloudflare.mediaoverquic.com/${TOKEN}" \
     --setup-version "${draft}" \
     --pub chat \
-    --pub-passive chat--messages
+    --pub "chat--messages#passive" \
+    --in chat--messages

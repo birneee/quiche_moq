@@ -60,11 +60,10 @@ pub(crate) fn find_asc_in_descriptors(data: &[u8]) -> Option<Vec<u8>> {
                 }
             }
             0x04 => {
-                if size > 13 {
-                    if let Some(asc) = find_asc_in_descriptors(&data[pos + 13..end]) {
+                if size > 13
+                    && let Some(asc) = find_asc_in_descriptors(&data[pos + 13..end]) {
                         return Some(asc);
                     }
-                }
             }
             _ => {}
         }

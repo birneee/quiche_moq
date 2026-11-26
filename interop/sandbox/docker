@@ -1,0 +1,131 @@
+#!/usr/bin/env bash
+# docker - stands in for docker in the Nix build sandbox, where no daemon runs: just what moq-interop-runner calls.
+# An image is a directory of $INTEROP_IMAGES, named by its reference with / and : as _, holding the unpacked
+# rootfs/ and config.json (an OCI runtime spec, see default.nix). Containers run with bubblewrap: the image's
+# rootfs read-only as /, writable /tmp, the sandbox's loopback network shared, `relay` resolving to it.
+#   docker image inspect IMAGE
+#   docker compose -f docker-compose.test.yml up --abort-on-container-exit
+#   docker compose -f docker-compose.test.yml down [...]
+# compose follows docker-compose.test.yml: relay, healthy once listening on MOQT_PORT, then test-client;
+# both log with compose's prefixes, the exit code is the test client's.
+
+# exit codes are handled explicitly, e.g. killing a container that already exited fails
+set +e -uo pipefail
+
+: "${INTEROP_IMAGES:?the directory of unpacked images}"
+PORT=4443
+PIDS="${TMPDIR:-/tmp}/interop-docker.pids"
+UID_IN=1000
+GID_IN=65534
+
+image_dir() {
+  local name="${1//\//_}"
+  echo "$INTEROP_IMAGES/${name//:/_}"
+}
+
+fail() {
+  echo "docker (sandbox): $*" >&2
+  exit 1
+}
+
+# run_container NAME IMAGE MLOG [KEY=VALUE...]: the image's entrypoint with its environment and these overrides
+run_container() {
+  local name="$1" image="$2" mlog="$3"; shift 3
+  local dir; dir=$(image_dir "$image")
+  [ -d "$dir" ] || fail "no image $image"
+  local config="$dir/config.json"
+  local -a env=() args=() binds=()
+  # docker's PATH for images without one
+  env=(PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin)
+  mapfile -t -O 1 env < <(jq -r '.process.env[]?' "$config")
+  mapfile -t args < <(jq -r '.process.args[]' "$config")
+  local cwd; cwd=$(jq -r '.process.cwd // "/"' "$config")
+  env+=("$@")
+  # what the image ships under /tmp stays visible in the writable /tmp
+  local entry
+  for entry in "$dir"/rootfs/tmp/* "$dir"/rootfs/tmp/.[!.]*; do
+    [ -e "$entry" ] || [ -L "$entry" ] || continue
+    binds+=(--ro-bind "$entry" "/tmp/$(basename "$entry")")
+  done
+  local -a setenv=()
+  for entry in "${env[@]}"; do
+    setenv+=(--setenv "${entry%%=*}" "${entry#*=}")
+  done
+  mkdir -p "$mlog"
+  bwrap \
+    --unshare-user --uid "$UID_IN" --gid "$GID_IN" --unshare-pid --unshare-ipc --die-with-parent \
+    --ro-bind "$dir/rootfs" / \
+    --dev /dev --proc /proc \
+    --tmpfs /tmp --tmpfs /var/tmp --tmpfs /run \
+    "${binds[@]}" \
+    --ro-bind "$INTEROP_HOSTS" /etc/hosts \
+    --ro-bind "$PWD/certs" /certs \
+    --bind "$mlog" /mlog \
+    --clearenv "${setenv[@]}" \
+    --chdir "$cwd" \
+    -- "${args[@]}" 2>&1 | sed -u "s/^/$name  | /"
+  return "${PIPESTATUS[0]}"
+}
+
+listening() {
+  local hex; hex=$(printf ':%04X ' "$PORT")
+  grep -qi "$hex" /proc/net/udp /proc/net/udp6 2>/dev/null
+}
+
+down() {
+  [ -f "$PIDS" ] || return 0
+  local pid
+  while read -r pid; do
+    kill "$pid" 2>/dev/null
+  done < "$PIDS"
+  sleep 1
+  while read -r pid; do
+    kill -9 "$pid" 2>/dev/null
+  done < "$PIDS"
+  rm -f "$PIDS"
+  # the next relay needs the port
+  local i
+  for i in $(seq 50); do listening || return 0; sleep 0.1; done
+}
+
+up() {
+  : "${RELAY_IMAGE:?}" "${CLIENT_IMAGE:?}"
+  down
+  run_container relay-1 "$RELAY_IMAGE" "$PWD/mlog/relay" MOQT_ROLE=relay MOQT_PORT="$PORT" &
+  local relay=$!
+  echo "$relay" >> "$PIDS"
+  # the healthcheck: 5s start period, then every 2s, 10 retries
+  local i
+  for i in $(seq 250); do
+    listening && break
+    kill -0 "$relay" 2>/dev/null || { echo "relay-1 exited before listening"; down; return 1; }
+    sleep 0.1
+  done
+  listening || { echo "relay-1 never listened on $PORT"; down; return 1; }
+  local -a client_env=("RELAY_URL=${RELAY_URL:-https://relay:$PORT}" TLS_DISABLE_VERIFY=1)
+  [ -n "${TESTCASE:-}" ] && client_env+=("TESTCASE=$TESTCASE")
+  [ -n "${MOQ_CLIENT_VERSION:-}" ] && client_env+=("MOQ_CLIENT_VERSION=$MOQ_CLIENT_VERSION")
+  [ -n "${VERBOSE:-}" ] && client_env+=("VERBOSE=$VERBOSE")
+  run_container test-client-1 "$CLIENT_IMAGE" "$PWD/mlog/client" "${client_env[@]}"
+  local rc=$?
+  echo "test-client-1 exited with code $rc"
+  down
+  return "$rc"
+}
+
+case "${1:-}" in
+  image)
+    [ "${2:-}" = inspect ] || fail "unsupported: image ${2:-}"
+    [ -d "$(image_dir "${3:-}")" ]
+    ;;
+  compose)
+    shift
+    while [ "${1:-}" = -f ]; do shift 2; done
+    case "${1:-}" in
+      up) up ;;
+      down|stop|rm) down ;;
+      *) fail "unsupported: compose $*" ;;
+    esac
+    ;;
+  *) fail "unsupported: $*" ;;
+esac

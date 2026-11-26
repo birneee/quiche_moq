@@ -10,6 +10,7 @@ set -euo pipefail
 
 draft=16
 
-moq --connect "https://draft-${draft}.cloudflare.mediaoverquic.com/${TOKEN}" \
+moq --connect "https://draft-${draft}.cloudflare.mediaoverquic.com/${TOKEN}#upstream" \
     --setup-version "${draft}" \
-    --sub chat--messages
+    --sub chat--messages \
+    --out chat--messages

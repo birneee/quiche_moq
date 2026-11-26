@@ -2,5 +2,10 @@
 name = "moq_pacing"
 version = "0.1.0"
 edition = "2024"
+license.workspace = true
+description = "Playback speed from buffer level, for MoQ subscribers presenting timed media"
+readme = "README.md"
+repository.workspace = true
+keywords = ["moq", "quic", "media", "streaming", "webtransport"]
 
 [dependencies]

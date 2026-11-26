@@ -2,12 +2,18 @@
 name = "moq_wire"
 version = "0.1.0"
 edition = "2024"
+license.workspace = true
+description = "Wire encoding of Media over QUIC Transport (MoQT) messages, objects and streams, drafts 7 to 19"
+readme = "README.md"
+repository.workspace = true
+keywords = ["moq", "quic", "media", "streaming", "webtransport"]
+categories = ["network-programming", "encoding", "no-std"]
 
 [features]
 qlog = ["dep:serde_json"]
 
 [dependencies]
-octets = { workspace = true }
+moq_wire_primitives = { path = "../moq_wire_primitives", version = "0.1.0" }
 serde_json = { workspace = true, optional = true }
 
 [dev-dependencies]

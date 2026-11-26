@@ -3,3 +3,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 wasm-pack build --target web --out-dir dist
 cp index.html dist/
+
+# stats.js r17 for the stats panels, served with the page since it may run without internet access; checked by hash
+curl -fsSL https://raw.githubusercontent.com/mrdoob/stats.js/5f0f917354ea2184456e5e361da5df6166306fbf/build/stats.min.js -o dist/stats.min.js
+echo "8a2c2b2d6e1250186bcd6adf5b65593fff66a301d7f8ab3510a39116fe041dd1  dist/stats.min.js" | sha256sum -c --quiet -

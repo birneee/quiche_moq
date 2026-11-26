@@ -8,13 +8,13 @@ members = [
     "moq_loc",
     "moq_object_cache",
     "moq_pacing",
-    "quiche_moq_macros",
     "quiche_h3_utils",
     "quiche_moq",
     "quiche_moq/examples/*",
     "moq_web",
     "quiche_moq_webtransport_helper",
     "moq_wire",
+    "moq_wire_primitives",
     "quiche_utils",
     "quiche_webtransport",
     "short_buf",
@@ -22,9 +22,12 @@ members = [
 ]
 resolver = "2"
 
+[workspace.package]
+license = "MIT"
+repository = "https://github.com/birneee/quiche_moq"
+
 [workspace.dependencies]
 boring = "4.19.0"
-bytes = "1.10.1"
 chrono = "0.4.42"
 clap = { version = "4.5.46", features = ["derive", "env"] }
 env_logger = "0.11.8"
@@ -38,11 +41,13 @@ libc = "0.2"
 quiche_h3_utils = { path="quiche_h3_utils" }
 quiche_mio_runner = { git="https://github.com/birneee/quiche_mio_runner" }
 quiche_moq = { path="quiche_moq" }
-moq_wire = { path="moq_wire" }
+moq_wire = { path = "moq_wire", version = "0.1.0" }
 quiche_utils = { path="quiche_utils" }
 quiche_webtransport = { path="quiche_webtransport" }
 rcgen = "0.13.2"
-short_buf = { path = "short_buf" }
+# Fast, non-DoS-resistant hasher for hot integer-keyed maps.
+rustc-hash = "2.1"
+short_buf = { path = "short_buf", version = "0.1.0" }
 smallvec = "2.0.0-alpha.11"
 url = "2.5.7"
 # `Instant`/`SystemTime` backed by `performance.now()` on wasm32;
@@ -51,18 +56,22 @@ web-time = "1.1.0"
 serde_json = "1"
 rstest = "0.25"
 quiche_moq_webtransport_helper = { path="quiche_moq_webtransport_helper" }
-quiche_moq_macros = { path="quiche_moq_macros" }
-http_capsule = { path = "http_capsule" }
+http_capsule = { path = "http_capsule", version = "0.1.0" }
 quiche_endpoint_utils = { path="quiche_endpoint_utils" }
-moq_object_cache = { path="moq_object_cache" }
-moq_pacing = { path="moq_pacing" }
-moq_loc = { path="moq_loc" }
-moq_core = { path="moq_core" }
-moq_core_async = { path="moq_core_async" }
+moq_object_cache = { path = "moq_object_cache", version = "0.1.0" }
+moq_pacing = { path = "moq_pacing", version = "0.1.0" }
+moq_loc = { path = "moq_loc", version = "0.1.0" }
+moq_core = { path = "moq_core", version = "0.1.0" }
+moq_core_async = { path = "moq_core_async", version = "0.1.0" }
 tokio = { version = "1", features = ["rt", "macros", "sync", "time"] }
-tokio-quiche = { git = "https://github.com/birneee/quiche", branch = "webtransport_streams_fix-2452" }
+# git, not path: must resolve to the same quiche checkout as the patch
+# below, or its own `quiche = { workspace = true }` pulls a second, distinct
+# instance and `Connection<F>` types stop unifying across crates.
+tokio-quiche = { git = "https://github.com/birneee/quiche.git", branch = "moq-combined" }
 
 [patch.crates-io]
-quiche = { git="https://github.com/birneee/quiche", branch = "webtransport_streams_fix-2452" }
-octets = { git="https://github.com/birneee/quiche", branch = "webtransport_streams_fix-2452" }
-qlog = { git="https://github.com/birneee/quiche", branch = "webtransport_streams_fix-2452" }
+# birneee/quiche fork, branch moq-combined. quiche_moq depends on
+# that fork's patches and does not build against upstream quiche.
+quiche = { git = "https://github.com/birneee/quiche.git", branch = "moq-combined" }
+octets = { git = "https://github.com/birneee/quiche.git", branch = "moq-combined" }
+qlog = { git = "https://github.com/birneee/quiche.git", branch = "moq-combined" }

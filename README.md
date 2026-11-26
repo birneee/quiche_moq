@@ -4,65 +4,106 @@
 
 # QUICHE MoQ
 
-> ⚠️ Not production ready
+> ⚠️ Not production ready, experimental research code
 
 > This project is not affiliated with [Cloudflare quiche](https://github.com/cloudflare/quiche)
 
-A [Media over QUIC (MoQ)](https://datatracker.ietf.org/doc/draft-ietf-moq-transport/) implementation for [quiche](https://github.com/cloudflare/quiche).
+A [Media over QUIC Transport (MoQT)](https://datatracker.ietf.org/doc/draft-ietf-moq-transport/) implementation
+for [quiche](https://github.com/cloudflare/quiche), drafts 07 to 19, over WebTransport and native QUIC.
 
-## Time example
+## Contents
 
-```shell
-$  RUST_LOG=info cargo run -p time-server
-[INFO  quiche_utils::cert] generate self signed TLS certificate
-[INFO  quiche_utils::cert] certificate spki: rugY1MtvoZbK+pVqkoojKCLBJMr2S6gKjacqkO2YqDY=
-[INFO  time_server] start server on 0.0.0.0:8080
-```
+Protocol
+- [`moq_wire_primitives`](moq_wire_primitives): `no_std` varints, bounded strings, reader and writer
+- [`moq_wire`](moq_wire): encoding of MoQT messages, objects and streams, drafts 07 to 19
+- [`moq_core`](moq_core): sans-IO session state machine behind a small `Transport` trait, `no_std`
+- [`moq_loc`](moq_loc): typed LOC properties (codec config, timestamps, ...)
+- [`moq_object_cache`](moq_object_cache): caches reassembling and storing objects by location
+- [`moq_pacing`](moq_pacing): playback speed from buffer level
 
-```shell
-$ RUST_LOG=info cargo run -p time-client
-[INFO  time_client] connect to 127.0.0.1:8080
-[INFO  time_client] subscribe clock second
-[INFO  time_client] received "2025-10-17T11:37:17.265898446+02:00"
-[INFO  time_client] received "2025-10-17T11:37:18.268052136+02:00"
-[INFO  time_client] received "2025-10-17T11:37:19.270110847+02:00"
-```
+Transports and runtimes
+- [`quiche_moq`](quiche_moq): `moq_core` on a quiche connection, examples in [`quiche_moq/examples`](quiche_moq/examples)
+- [`quiche_moq_webtransport_helper`](quiche_moq_webtransport_helper): QUIC, WebTransport and MoQ setup for mio endpoints
+- [`quiche_webtransport`](quiche_webtransport): WebTransport over HTTP/3 (draft 16) on quiche
+- [`moq_core_async`](moq_core_async): runtime-agnostic async API over `moq_core`
+- [`moq_tokio`](moq_tokio): async client and server on tokio and tokio-quiche
+- [`http_capsule`](http_capsule), [`short_buf`](short_buf), [`quiche_utils`](quiche_utils),
+  [`quiche_h3_utils`](quiche_h3_utils), [`quiche_endpoint_utils`](quiche_endpoint_utils): small helpers
+
+Applications
+- [`moq_cli`](moq_cli): the `moq` node: publish, subscribe, relay and route tracks
+- [`moq_web`](moq_web): browser player on WebTransport and WebCodecs, Rust and WASM
+
+Testing
+- [`interop`](interop): [moq-interop-runner](https://github.com/englishm/moq-interop-runner) image and the
+  full interop matrix in the Nix sandbox
+- [`experiments`](experiments): [nixnet](https://github.com/birneee/nixnet) testbeds, e.g. `nix run .#experiments.web`
+- [`check.sh`](check.sh): what CI checks, run in `nix develop`
 
 ## Architecture
 
-`moq_wire` (wire format) → `moq_core` (sans-IO session state machine, talking
-to a small `Transport` trait) → a `Transport` impl per platform: `quiche_moq`
-(native QUIC/WebTransport, used by `moq_cli`) and `moq_web` (browser
-WebTransport). See each crate's own README for details.
+```mermaid
+flowchart TD
+    cli[moq_cli] --> helper[quiche_moq_webtransport_helper]
+    helper --> qmoq[quiche_moq]
+    web[moq_web] --> async[moq_core_async]
+    tokio[moq_tokio] --> async
+    async --> core
+    qmoq -- "impl Transport" --> core[moq_core]
+    qmoq --> wt[quiche_webtransport]
+    tokio --> wt
+    wt --> quiche[quiche fork]
+    qmoq --> quiche
+    tokio --> tq[tokio-quiche]
+    web --> browser[browser WebTransport, WebCodecs]
+    core --> wire[moq_wire] --> prim[moq_wire_primitives]
+    cli & web & async -.-> cache[moq_object_cache]
+    cli & web -.-> loc[moq_loc] & pacing[moq_pacing]
+    classDef repo fill:#f48120,stroke:#b35d10,color:#fff
+    class cli,helper,qmoq,web,async,tokio,core,wt,wire,prim,cache,loc,pacing repo
+```
+
+Orange boxes are crates of this repository, the others external dependencies.
+
+`moq_core` holds all protocol logic and does no I/O. Each platform implements its `Transport`: `quiche_moq` for
+mio event loops (`moq_cli`), `moq_core_async` for async callers, with `moq_tokio` natively and `moq_web` in the
+browser. Buffering and caching policy stay with the application.
 
 ## Features
 
-- multi version support: draft 07 through draft 18 (see caveat below for 17/18)
-- subscribe, publish, and namespace announce/unannounce over WebTransport
-- relaying with selective namespace re-announcement, priority propagation, and
-  delivery-timeout aggregation across downstream subscribers
-- in-browser client (`moq_web`) with live WebCodecs video/audio playback
-- adaptive playback pacing and pluggable object caching, shared between the
-  native and browser clients
-- typed [LOC](https://datatracker.ietf.org/doc/draft-ietf-moq-loc/)
-  object-extension headers, driving automatic codec setup and keyframe
-  detection
-- fMP4 demuxing and remuxing with automatic codec detection
-- [qlog](https://datatracker.ietf.org/doc/draft-pardue-moq-qlog-moq-events/05/)
-  tracing for control messages and object delivery
-- runtime-tunable QUIC transport (congestion window, flow control, keepalive)
-  and a runtime-toggleable padding stream
-- interop tested against [Cloudflare](https://blog.cloudflare.com/moq/) and
-  [moqtransport](https://github.com/mengelbart/moqtransport)
+- drafts 07 to 19, modelled on draft 19 and mapped to each older draft; a feature a draft lacks is refused there
+- WebTransport (`https://`) and native QUIC (`moqt://`, draft 15+) sessions
+- subscribe, publish, namespace announce and subscribe, SUBSCRIBE_TRACKS, track status and fetch
+- request updates, range filters, delivery timeouts, priorities, streams and datagrams
+- relaying with namespace re-announcement, multipath subscriptions, race and reconnect of upstreams
+- browser player with live WebCodecs video and audio, adaptive playback pacing, stats panels
+- typed [LOC](https://datatracker.ietf.org/doc/draft-ietf-moq-loc/) properties, fMP4 demuxing and remuxing
+- [qlog](https://datatracker.ietf.org/doc/draft-pardue-moq-qlog-moq-events/) of control messages and objects
+- runtime-tunable QUIC transport and padding stream
+- fuzzed decoders and sessions, interop tested in [moq-interop-runner](https://github.com/englishm/moq-interop-runner)
+  as `birneee-moq`
+
+Drafts before 15 negotiate the version in the SETUP messages, from draft 15 on ALPN or `WT-Available-Protocols`
+pin exactly one. Draft 16 is the best tested version.
 
 ## Planned Features
 
-- MoQ via native QUIC (WebTransport only today)
-- fetch, unsubscribe, subscribe-to-namespace / track status
-- datagrams (streams only today)
+- fetch before draft 15
+- datagrams before draft 14
+- replacing range filters with a request update
+- UNSUBSCRIBE_NAMESPACE
 
-> Draft 17+ negotiates its version via ALPN (QUIC) or the
-> `WT-Available-Protocols` header (WebTransport, §3.1.3) instead of the SETUP
-> message — but that header isn't settable from the browser's `WebTransport`
-> JS API, so this implementation keeps the old in-band SETUP negotiation at
-> every draft as a deliberate, non-compliant testing simplification.
+## Quick start
+
+```shell
+$ nix develop
+$ RUST_LOG=info cargo run -p time-server
+[INFO  time_server] start server on 0.0.0.0:8080
+$ RUST_LOG=info cargo run -p time-client
+[INFO  time_client] subscribe clock second
+[INFO  time_client] received "2025-10-17T11:37:17.265898446+02:00"
+```
+
+## License
+
+MIT, see [LICENSE](LICENSE).

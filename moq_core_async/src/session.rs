@@ -1,27 +1,23 @@
-use moq_core::session::{MoqTransportSession, PollResult};
-use moq_core::wire::control_message::subscribe::FilterType;
-use moq_core::wire::control_message::RequestErrorMessage;
-use moq_core::wire::{NamespaceTrackname, RequestId, TrackAlias};
-use moq_core::{Config, Error};
+use std::collections::VecDeque;
+
+use moq_core::session::MoqTransportSession;
+use moq_core::{Event, IncomingRequest, Timestamp};
+use moq_core::SubscribeOptions;
+use moq_core::wire::{NamespaceTrackname, TrackAlias};
+use moq_core::{Config, DropQueue, Error, Subscription};
 
 use crate::notify::Notify;
 use crate::transport::AsyncTransport;
 
-/// Wraps `moq_core::MoqTransportSession` to turn its synchronous
-/// `handle()`/`post_handle()` + poll-style getters into `async fn`s a caller
-/// can `.await` directly, e.g. `session.run_once().await`.
-///
-/// Holds `&mut self` for the duration of any `async fn` here (there's no
-/// interior mutability) — so only one such call can be in flight at a time,
-/// same as `MoqTransportSession` itself. Callers that need several logical
-/// operations in flight concurrently (e.g. multiple `subscribe()`s at once)
-/// should drive this from a single task and use
-/// [`crate::AsyncMoqSessionActor`]/[`crate::AsyncMoqSessionHandle`] instead
-/// of calling this directly from several places.
+/// `moq_core::MoqTransportSession` driven by `async fn`s, e.g.
+/// `session.run_once().await`. One call at a time, for several in flight
+/// use [`crate::AsyncMoqSessionActor`]/[`crate::AsyncMoqSessionHandle`].
 pub struct AsyncMoqSession<T: AsyncTransport> {
-    session: MoqTransportSession,
+    session: MoqTransportSession<T::DropQueue>,
     t: T,
     wake: Notify,
+    /// Events other than REQUEST_UPDATE requests, see `next_event`.
+    events: VecDeque<Event<T::DropQueue>>,
 }
 
 impl<T: AsyncTransport> AsyncMoqSession<T> {
@@ -32,12 +28,18 @@ impl<T: AsyncTransport> AsyncMoqSession<T> {
     /// tasks capture, before the session that wraps it exists).
     pub fn connect(mut t: T, config: Config, wake: Notify) -> Result<Self, Error> {
         let session = MoqTransportSession::connect(&mut t, config)?;
-        Ok(Self { session, t, wake })
+        Ok(Self::new(session, t, wake))
     }
 
     pub fn accept(t: T, config: Config, wake: Notify) -> Result<Self, Error> {
         let session = MoqTransportSession::accept(config)?;
-        Ok(Self { session, t, wake })
+        Ok(Self::new(session, t, wake))
+    }
+
+    /// Dropped requests and handles wake the session to resolve them.
+    fn new(session: MoqTransportSession<T::DropQueue>, t: T, wake: Notify) -> Self {
+        session.set_drop_waker(wake.waker());
+        Self { session, t, wake, events: VecDeque::new() }
     }
 
     /// A clonable handle background I/O tasks call `.notify()` on when new
@@ -46,12 +48,14 @@ impl<T: AsyncTransport> AsyncMoqSession<T> {
         self.wake.clone()
     }
 
-    pub fn session(&self) -> &MoqTransportSession {
+    pub fn session(&self) -> &MoqTransportSession<T::DropQueue> {
         &self.session
     }
 
-    pub fn session_mut(&mut self) -> &mut MoqTransportSession {
-        &mut self.session
+
+    /// The next event, REQUEST_UPDATEs are answered by `begin_handle()` already.
+    pub fn next_event(&mut self) -> Option<Event<T::DropQueue>> {
+        self.events.pop_front()
     }
 
     pub fn transport_mut(&mut self) -> &mut T {
@@ -63,69 +67,52 @@ impl<T: AsyncTransport> AsyncMoqSession<T> {
         self.wake.notified().await;
     }
 
-    /// Calls `handle()`. Must be followed by `end_handle()` before this (or
-    /// `subscribe_request()`/`unsubscribe()`) is called again — like
-    /// `MoqTransportSession` itself, mutating calls made in between (e.g.
-    /// `parts_mut()`'s `read_obj_hdr`/`read_obj_pld` to read track data, or
-    /// accepting an incoming subscription) share the same window and only
-    /// need the one `end_handle()` to close it out. Prefer `run_once()` if
-    /// nothing needs to run in that window.
-    pub fn begin_handle(&mut self) -> PollResult {
+    /// Calls `handle()`; application work follows, then `end_handle()`
+    /// flushes it. Prefer `run_once()` if there's nothing to do in between.
+    pub fn begin_handle(&mut self) {
         let readable = self.t.readable_stream_ids();
-        self.session.handle(&mut self.t, &readable)
+        self.session.handle(&mut self.t, &readable, Timestamp::now());
+        while let Some(event) = self.session.next_event() {
+            match event {
+                // without an object cache, answered without LARGEST_OBJECT
+                Event::Request(IncomingRequest::RequestUpdate(update)) => {
+                    let _ = self.session.accept_request(update, None, &mut self.t);
+                }
+                event => self.events.push_back(event),
+            }
+        }
     }
 
-    /// Closes out the window `begin_handle()` opened and flushes queued sends.
+    /// Sends padding and flushes queued sends.
     pub async fn end_handle(&mut self) -> Result<(), T::FlushError> {
-        self.session.post_handle(&mut self.t);
+        self.session.send_padding(&mut self.t);
         self.t.flush_sends().await
     }
 
     /// Waits for `notify()`, then drives one `begin_handle()`/`end_handle()`
-    /// cycle with nothing in between, returning the resulting `PollResult`.
+    /// cycle with nothing in between.
     /// For anything that needs to run in that window, call
     /// `wait_for_wake()`/`begin_handle()`/`end_handle()` directly instead.
-    pub async fn run_once(&mut self) -> Result<PollResult, T::FlushError> {
+    pub async fn run_once(&mut self) -> Result<(), T::FlushError> {
         self.wait_for_wake().await;
-        let result = self.begin_handle();
-        self.end_handle().await?;
-        Ok(result)
+        self.begin_handle();
+        self.end_handle().await
     }
 
     /// Sends SUBSCRIBE without waiting for a response.
-    ///
-    /// Like `handle()`, this marks the session dirty; it closes that out
-    /// itself (calling `end_handle()`-equivalent cleanup before returning),
-    /// so it's safe to call standalone, outside any `begin_handle()`/
-    /// `end_handle()` window. It's also safe to call *inside* one (e.g.
-    /// `moq_cli`'s tick loop calls `subscribe()` many times before its one
-    /// `post_handle()`) — the extra `post_handle()` this does is redundant
-    /// but harmless there, since `post_handle()` has no "already called"
-    /// check.
     pub fn subscribe_request(
         &mut self,
         namespace_trackname: &NamespaceTrackname,
-        subscriber_priority: Option<u8>,
-        delivery_timeout: Option<u64>,
-        filter_type: FilterType,
-    ) -> Result<RequestId, Error> {
-        let result = self.session.subscribe(namespace_trackname, subscriber_priority, delivery_timeout, filter_type, &mut self.t);
-        self.session.post_handle(&mut self.t);
-        result
-    }
-
-    /// Also marks the session dirty; see `subscribe_request()`'s doc comment
-    /// for why this closes that out itself before returning.
-    pub fn unsubscribe(&mut self, request_id: RequestId) {
-        self.session.unsubscribe(request_id, &mut self.t);
-        self.session.post_handle(&mut self.t);
+        options: SubscribeOptions,
+    ) -> Result<moq_core::Subscription<T::DropQueue>, Error> {
+        self.session.subscribe(namespace_trackname, options, &mut self.t)
     }
 
     /// Simultaneous mutable access to the session and transport, for
     /// operations `AsyncMoqSession` doesn't wrap directly (e.g. reading
     /// track data via `MoqTransportSession::read_obj_hdr`/`read_obj_pld`,
     /// which need both at once).
-    pub fn parts_mut(&mut self) -> (&mut MoqTransportSession, &mut T) {
+    pub fn parts_mut(&mut self) -> (&mut MoqTransportSession<T::DropQueue>, &mut T) {
         (&mut self.session, &mut self.t)
     }
 }
@@ -133,16 +120,15 @@ impl<T: AsyncTransport> AsyncMoqSession<T> {
 #[derive(Debug)]
 pub enum SubscribeError {
     Session(Error),
-    Rejected(RequestErrorMessage),
-    /// `unsubscribe()` was called for this request before a response arrived.
-    Unsubscribed,
+    Rejected(moq_core::RequestFailure),
+    /// The session ended before a response arrived.
+    SessionEnded,
 }
 
-/// A successful subscription: `track_alias` identifies the track for reading
-/// data (`MoqTransportSession::read_obj_hdr`/`read_obj_pld`); `request_id`
-/// is what `unsubscribe()` needs.
-#[derive(Debug, Clone, Copy)]
-pub struct Subscription {
-    pub request_id: RequestId,
+/// An accepted SUBSCRIBE, dropping `subscription` unsubscribes.
+#[derive(Debug)]
+pub struct Subscribed<Q: DropQueue> {
+    pub subscription: Subscription<Q>,
+    /// Identifies the track's objects, see `MoqTransportSession::readable`.
     pub track_alias: TrackAlias,
 }

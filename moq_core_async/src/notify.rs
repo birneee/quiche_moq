@@ -1,7 +1,7 @@
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
-use std::task::{Context, Poll, Waker};
+use std::task::{Context, Poll, Wake, Waker};
 
 struct NotifyState {
     waker: Option<Waker>,
@@ -10,16 +10,8 @@ struct NotifyState {
     pending: bool,
 }
 
-/// Single-slot, executor-agnostic wake signal: one side calls `notify()`
-/// (e.g. a background reader task that received new bytes), the other
-/// `.await`s `notified()` in a loop. Generalizes the JS-Promise-specific
-/// wake channel `moq_web` hand-rolled in `wake.rs` so the same primitive
-/// works under any executor (WASM via `wasm_bindgen_futures`, or a native
-/// async runtime), not just one bound to JS Promises.
-///
-/// Only one pending `notified()` call is tracked at a time — this mirrors
-/// `moq_web`'s original single-consumer wake loop, not a broadcast/multi-waiter
-/// primitive like `tokio::sync::Notify`.
+/// Single-slot, executor-agnostic wake signal: one side calls `notify()` (e.g. a reader task that received
+/// bytes), the other `.await`s `notified()` in a loop. One waiter at a time, unlike `tokio::sync::Notify`.
 #[derive(Clone)]
 pub struct Notify(Arc<Mutex<NotifyState>>);
 
@@ -46,6 +38,19 @@ impl Notify {
     /// call (or immediately, if a notification is already pending).
     pub fn notified(&self) -> Notified<'_> {
         Notified { notify: self }
+    }
+}
+
+impl Wake for Notify {
+    fn wake(self: Arc<Self>) {
+        self.notify();
+    }
+}
+
+impl Notify {
+    /// Calls `notify()` when woken, e.g. by `MoqTransportSession::set_drop_waker`.
+    pub fn waker(&self) -> Waker {
+        Arc::new(self.clone()).into()
     }
 }
 

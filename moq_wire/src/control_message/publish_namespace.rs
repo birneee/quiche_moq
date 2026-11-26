@@ -1,31 +1,25 @@
 use crate::bytes::{FromBytes, ToBytes};
 use crate::error::Result;
-use crate::vi64;
-use crate::{Parameters, RequestId, Version, PUBLISH_NAMESPACE_MESSAGE_ID, MOQ_VERSION_DRAFT_07, MOQ_VERSION_DRAFT_10, MOQ_VERSION_DRAFT_11, MOQ_VERSION_DRAFT_18};
-use octets::{Octets, OctetsMut};
-use crate::control_message::ControlMessage;
+use crate::message_parameters::{MessageParams, Param};
+use crate::{RequestId, Version, PUBLISH_NAMESPACE_MESSAGE_ID};
+use crate::{Frame, Reader, Writer};
+use crate::control_message::{decode_request_id, encode_request_id, required, ControlMessage};
 use crate::namespace::Namespace;
 
+/// PUBLISH_NAMESPACE (draft-ietf-moq-transport-19 §10.13), ANNOUNCE before draft 14.
 #[derive(Debug)]
-/// Called ANNOUNCE before draft-13
-/// Called PUBLISH_NAMESPACE since draft-14
 pub struct PublishNamespaceMessage {
-    /// Some for DRAFT 11 to 13
+    /// `None` until draft 10
     request_id: Option<RequestId>,
     track_namespace: Namespace,
-    parameters: Parameters,
 }
 
 impl PublishNamespaceMessage {
-    pub fn new(request_id: Option<RequestId>, track_namespace: Namespace, parameters: Parameters) -> Self {
-        Self {
-            request_id,
-            track_namespace,
-            parameters,
-        }
+    pub fn new(request_id: Option<RequestId>, track_namespace: Namespace) -> Self {
+        Self { request_id, track_namespace }
     }
 
-    /// Some for DRAFT 11 to 13
+    /// `None` until draft 10
     pub fn request_id(&self) -> Option<RequestId> { self.request_id }
 
     pub fn track_namespace(&self) -> &Namespace {
@@ -42,33 +36,29 @@ impl ControlMessage for PublishNamespaceMessage {
 
     fn qlog_type_name(&self) -> &'static str { "publish_namespace" }
 
-    fn to_body_bytes(&self, b: &mut OctetsMut, version: Version) -> Result<()> {
-        match version {
-            MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_10 => {},
-            MOQ_VERSION_DRAFT_11..=MOQ_VERSION_DRAFT_18 => {
-                vi64::write_varint(b, self.request_id.unwrap(), version)?;
+    fn to_body_bytes(&self, b: &mut Writer, version: Version) -> Result<()> {
+        match version.draft() {
+            ..=10 => {},
+            11.. => {
+                encode_request_id(b, required(self.request_id, "a Request ID")?, version)?;
             }
-            _ => unimplemented!()
         }
         self.track_namespace.to_bytes(b, version)?;
-        self.parameters.to_bytes(b, version)?;
-        Ok(())
+        MessageParams::new().to_bytes(b, version)
     }
 
-    fn from_body_bytes(b: &mut Octets, version: Version) -> Result<Self> {
-        let request_id = match version {
-            MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_10 => None,
-            MOQ_VERSION_DRAFT_11..=MOQ_VERSION_DRAFT_18 => {
-                Some(vi64::read_varint(b, version)?)
+    fn from_body_bytes(b: &mut Reader<'_, Frame>, version: Version) -> Result<Self> {
+        let request_id = match version.draft() {
+            ..=10 => None,
+            11.. => {
+                Some(decode_request_id(b, version)?)
             }
-            _ => unimplemented!()
         };
         let track_namespace = Namespace::from_bytes(b, version)?;
-        let parameters = Parameters::from_bytes(b, version)?;
-        Ok(Self {
-            request_id,
-            track_namespace,
-            parameters,
-        })
+        let mut params = MessageParams::from_bytes(b, version)?;
+        // TODO authorization, until then tokens are ignored
+        params.take_all_bytes(Param::AuthorizationToken);
+        params.finish(version)?;
+        Ok(Self { request_id, track_namespace })
     }
 }

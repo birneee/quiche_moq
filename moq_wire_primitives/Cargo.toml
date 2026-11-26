@@ -1,0 +1,12 @@
+[package]
+name = "moq_wire_primitives"
+version = "0.1.0"
+edition = "2024"
+license.workspace = true
+description = "no_std primitives of the MoQ wire format: varints, bounded byte strings, reader and writer"
+readme = "README.md"
+repository.workspace = true
+keywords = ["moq", "quic", "media", "streaming", "webtransport"]
+categories = ["network-programming", "encoding", "no-std"]
+
+[dependencies]

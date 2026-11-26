@@ -47,14 +47,8 @@ pub fn key_pair() -> &'static (PKey<Private>, X509) {
     })
 }
 
-pub fn _init_webtransport_pipe() -> (
-    Pipe,
-    h3::Connection,
-    crate::Connection,
-    h3::Connection,
-    crate::Connection,
-    crate::SessionId,
-) {
+/// Established QUIC and h3 connections, client and server.
+pub fn _init_h3_pipe() -> (Pipe, h3::Connection, h3::Connection) {
     let mut pipe = Pipe::with_config(&mut {
         let (key, cert) = key_pair();
         let mut c = Config::with_boring_ssl_ctx_builder(PROTOCOL_VERSION, {
@@ -71,6 +65,7 @@ pub fn _init_webtransport_pipe() -> (
         c.set_initial_max_stream_data_bidi_local(1000000);
         c.set_initial_max_stream_data_uni(1000000);
         c.set_application_protos(&[ALPN_HTTP_3]).unwrap();
+        c.enable_dgram(true, 16, 16);
         c.verify_peer(false);
         c
     })
@@ -103,14 +98,25 @@ pub fn _init_webtransport_pipe() -> (
     assert!(matches!(c_h3.poll(&mut pipe.client), Err(h3::Error::Done)));
     assert!(matches!(s_h3.poll(&mut pipe.server), Err(h3::Error::Done)));
     assert!(crate::webtransport_enabled_by_server(&c_h3));
+    (pipe, c_h3, s_h3)
+}
 
+pub fn _init_webtransport_pipe() -> (
+    Pipe,
+    h3::Connection,
+    crate::Connection,
+    h3::Connection,
+    crate::Connection,
+    crate::SessionId,
+) {
+    let (mut pipe, mut c_h3, mut s_h3) = _init_h3_pipe();
     let mut c_wt = crate::Connection::new(false);
     let wt_session_id = c_wt.connect_session(
         &mut c_h3,
         &mut pipe.client,
         "https://example.org/".parse().unwrap(),
         &[],
-    );
+    ).unwrap();
 
     let mut s_wt = crate::Connection::new(true);
 
@@ -119,7 +125,7 @@ pub fn _init_webtransport_pipe() -> (
     let Ok((stream_id, h3::Event::Headers { list, .. })) = s_h3.poll(&mut pipe.server) else {
         unreachable!()
     };
-    s_wt.recv_hdrs(stream_id, &list);
+    s_wt.recv_hdrs(stream_id, &list).unwrap();
     assert!(s_wt.established(wt_session_id));
     s_wt.poll(&mut s_h3, &mut pipe.server);
 
@@ -128,7 +134,7 @@ pub fn _init_webtransport_pipe() -> (
     let Ok((stream_id, h3::Event::Headers { list, .. })) = c_h3.poll(&mut pipe.client) else {
         unreachable!()
     };
-    c_wt.recv_hdrs(stream_id, &list);
+    c_wt.recv_hdrs(stream_id, &list).unwrap();
     assert!(c_wt.established(wt_session_id));
 
     (pipe, c_h3, c_wt, s_h3, s_wt, wt_session_id)

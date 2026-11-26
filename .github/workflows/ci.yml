@@ -22,10 +22,8 @@ jobs:
       - uses: DeterminateSystems/nix-installer-action@v21
       - uses: DeterminateSystems/magic-nix-cache-action@v13
       - uses: DeterminateSystems/flake-checker-action@v12
-      - name: Cargo Clippy
-        run: nix develop -c cargo clippy -- -D warnings
-      - name: Cargo Test
-        run: nix develop -c cargo test
+      - name: Check
+        run: nix develop -c ./check.sh
       - name: Nix Build
         run: nix build -L
       - uses: actions/upload-artifact@v4

@@ -46,6 +46,16 @@ impl KeepaliveHandler {
         Self { config_interval: interval, pto_limit: false, paths: HashMap::new() }
     }
 
+    /// The ping interval on a path with this RTT, see `pto_limit`.
+    fn effective_interval(&self, rtt: Duration, rttvar: Duration) -> Duration {
+        if !self.pto_limit {
+            return self.config_interval;
+        }
+        // RFC 9002 §6.2.1: PTO = smoothed_rtt + max(4*rttvar, kGranularity)
+        let pto = rtt + rttvar * 4;
+        self.config_interval.max(pto * 3 / 2)
+    }
+
     /// Update internal state, send PING frame if necessary, and return the duration until the next ping is due.
     /// Must be called after every batch of received packets and again when the returned duration elapses.
     /// Returns `None` only when no paths are known.
@@ -56,13 +66,7 @@ impl KeepaliveHandler {
         for path in conn.path_stats() {
             let key = (path.local_addr, path.peer_addr);
 
-            let effective_interval = if self.pto_limit {
-                // RFC 9002 §6.2.1: PTO = smoothed_rtt + max(4*rttvar, kGranularity)
-                let pto = path.rtt + path.rttvar * 4;
-                self.config_interval.max(pto * 3 / 2)
-            } else {
-                self.config_interval
-            };
+            let effective_interval = self.effective_interval(path.rtt, path.rttvar);
             let entry = self.paths.entry(key).or_insert(Value {
                 recv_bytes: 0,
                 last_recv: now,
@@ -92,5 +96,28 @@ impl KeepaliveHandler {
                 (base + v.effective_interval).saturating_duration_since(now)
             })
             .min()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const RTT: Duration = Duration::from_millis(100);
+    const RTTVAR: Duration = Duration::from_millis(25);
+
+    /// Never faster than the connection can react: 1.5 PTO.
+    #[test]
+    fn pto_limit_floors_the_interval() {
+        let handler = KeepaliveHandler::new(Duration::from_millis(10));
+        assert_eq!(handler.effective_interval(RTT, RTTVAR), Duration::from_millis(300));
+        let slow = KeepaliveHandler::new(Duration::from_secs(1));
+        assert_eq!(slow.effective_interval(RTT, RTTVAR), Duration::from_secs(1));
+    }
+
+    #[test]
+    fn no_pto_limit_uses_exact_interval() {
+        let handler = KeepaliveHandler::new_no_pto_limit(Duration::from_millis(10));
+        assert_eq!(handler.effective_interval(RTT, RTTVAR), Duration::from_millis(10));
     }
 }

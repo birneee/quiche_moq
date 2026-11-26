@@ -1,17 +1,17 @@
-use moq_wire::{KeyValuePair, KeyValuePairValue, KeyValuePairs};
+use moq_wire::{BytesKey, KeyValuePair, KeyValuePairs, VarintKey};
 
 /// Timestamp property ID (§2.3.1.1). Even → varint.
-pub const TIMESTAMP_ID: u64 = 0x10;
+pub const TIMESTAMP_ID: VarintKey = VarintKey::new(0x10);
 /// Timescale property ID (§2.3.1.2). Even → varint.
-pub const TIMESCALE_ID: u64 = 0x08;
+pub const TIMESCALE_ID: VarintKey = VarintKey::new(0x08);
 /// Video Frame Marking property ID (§2.3.2.2). Odd → length-prefixed bytes.
-pub const VIDEO_FRAME_MARKING_ID: u64 = 0x09;
+pub const VIDEO_FRAME_MARKING_ID: BytesKey = BytesKey::new(0x09);
 /// Video Config property ID (§2.3.2.1). Odd → length-prefixed bytes.
-pub const VIDEO_CONFIG_ID: u64 = 0x0D;
+pub const VIDEO_CONFIG_ID: BytesKey = BytesKey::new(0x0D);
 /// Audio Config property ID (§2.3.3.1). Odd → length-prefixed bytes.
-pub const AUDIO_CONFIG_ID: u64 = 0x0F;
+pub const AUDIO_CONFIG_ID: BytesKey = BytesKey::new(0x0F);
 /// Audio Level property ID (§2.3.3.2). Even → varint.
-pub const AUDIO_LEVEL_ID: u64 = 0x0C;
+pub const AUDIO_LEVEL_ID: VarintKey = VarintKey::new(0x0C);
 
 /// Timestamp of the encoded media frame (§2.3.1.1).
 ///
@@ -99,39 +99,14 @@ pub enum LocProperty {
 }
 
 impl LocProperty {
-    pub fn id(&self) -> u64 {
-        match self {
-            LocProperty::Timestamp(_) => TIMESTAMP_ID,
-            LocProperty::Timescale(_) => TIMESCALE_ID,
-            LocProperty::VideoFrameMarking(_) => VIDEO_FRAME_MARKING_ID,
-            LocProperty::VideoConfig(_) => VIDEO_CONFIG_ID,
-            LocProperty::AudioConfig(_) => AUDIO_CONFIG_ID,
-            LocProperty::AudioLevel(_) => AUDIO_LEVEL_ID,
-        }
-    }
-
-    /// Convert to a [`KeyValuePair`], returning an error if the ID parity
-    /// constraint is violated (which cannot happen for the known variants).
     pub fn to_kvp(&self) -> KeyValuePair {
         match self {
-            LocProperty::Timestamp(Timestamp(v)) => {
-                KeyValuePair::new_varint(TIMESTAMP_ID, *v).unwrap()
-            }
-            LocProperty::Timescale(Timescale(v)) => {
-                KeyValuePair::new_varint(TIMESCALE_ID, *v).unwrap()
-            }
-            LocProperty::VideoFrameMarking(VideoFrameMarking(bytes)) => {
-                KeyValuePair::new_bytes(VIDEO_FRAME_MARKING_ID, bytes.clone()).unwrap()
-            }
-            LocProperty::VideoConfig(VideoConfig(data)) => {
-                KeyValuePair::new_bytes(VIDEO_CONFIG_ID, data.clone()).unwrap()
-            }
-            LocProperty::AudioConfig(AudioConfig(data)) => {
-                KeyValuePair::new_bytes(AUDIO_CONFIG_ID, data.clone()).unwrap()
-            }
-            LocProperty::AudioLevel(AudioLevel(v)) => {
-                KeyValuePair::new_varint(AUDIO_LEVEL_ID, *v as u64).unwrap()
-            }
+            LocProperty::Timestamp(Timestamp(v)) => KeyValuePair::Varint(TIMESTAMP_ID, *v),
+            LocProperty::Timescale(Timescale(v)) => KeyValuePair::Varint(TIMESCALE_ID, *v),
+            LocProperty::VideoFrameMarking(VideoFrameMarking(bytes)) => KeyValuePair::Bytes(VIDEO_FRAME_MARKING_ID, bytes.clone()),
+            LocProperty::VideoConfig(VideoConfig(data)) => KeyValuePair::Bytes(VIDEO_CONFIG_ID, data.clone()),
+            LocProperty::AudioConfig(AudioConfig(data)) => KeyValuePair::Bytes(AUDIO_CONFIG_ID, data.clone()),
+            LocProperty::AudioLevel(AudioLevel(v)) => KeyValuePair::Varint(AUDIO_LEVEL_ID, u64::from(*v)),
         }
     }
 
@@ -139,27 +114,15 @@ impl LocProperty {
     ///
     /// Returns `None` if the ID is not a recognised LOC property.
     pub fn from_kvp(kvp: &KeyValuePair) -> Option<Self> {
-        match (kvp.ty(), kvp.value()) {
-            (TIMESTAMP_ID, KeyValuePairValue::Varint(v)) => {
-                Some(LocProperty::Timestamp(Timestamp(*v)))
-            }
-            (TIMESCALE_ID, KeyValuePairValue::Varint(v)) => {
-                Some(LocProperty::Timescale(Timescale(*v)))
-            }
-            (VIDEO_FRAME_MARKING_ID, KeyValuePairValue::Bytes(data)) => {
-                Some(LocProperty::VideoFrameMarking(VideoFrameMarking(data.clone())))
-            }
-            (VIDEO_CONFIG_ID, KeyValuePairValue::Bytes(data)) => {
-                Some(LocProperty::VideoConfig(VideoConfig(data.clone())))
-            }
-            (AUDIO_CONFIG_ID, KeyValuePairValue::Bytes(data)) => {
-                Some(LocProperty::AudioConfig(AudioConfig(data.clone())))
-            }
-            (AUDIO_LEVEL_ID, KeyValuePairValue::Varint(v)) => {
-                Some(LocProperty::AudioLevel(AudioLevel(*v as u8)))
-            }
-            _ => None,
-        }
+        Some(match kvp {
+            KeyValuePair::Varint(TIMESTAMP_ID, v) => LocProperty::Timestamp(Timestamp(*v)),
+            KeyValuePair::Varint(TIMESCALE_ID, v) => LocProperty::Timescale(Timescale(*v)),
+            KeyValuePair::Bytes(VIDEO_FRAME_MARKING_ID, data) => LocProperty::VideoFrameMarking(VideoFrameMarking(data.clone())),
+            KeyValuePair::Bytes(VIDEO_CONFIG_ID, data) => LocProperty::VideoConfig(VideoConfig(data.clone())),
+            KeyValuePair::Bytes(AUDIO_CONFIG_ID, data) => LocProperty::AudioConfig(AudioConfig(data.clone())),
+            KeyValuePair::Varint(AUDIO_LEVEL_ID, v) => LocProperty::AudioLevel(AudioLevel(u8::try_from(*v).ok()?)),
+            _ => return None,
+        })
     }
 }
 
@@ -238,7 +201,7 @@ impl LocProperties {
     /// Encode all LOC Properties as a [`KeyValuePairs`] for use in an MOQ
     /// Object Header.
     pub fn to_kvps(&self) -> KeyValuePairs {
-        self.0.iter().map(|p| p.to_kvp()).collect::<Vec<_>>().into()
+        self.0.iter().map(LocProperty::to_kvp).collect()
     }
 
     /// Decode LOC Properties from a [`KeyValuePairs`] object header.
@@ -259,17 +222,10 @@ mod tests {
     use moq_wire::{MOQ_VERSION_DRAFT_16, Version};
 
     fn roundtrip(props: &LocProperties, version: Version) -> LocProperties {
-        let kvps = props.to_kvps();
-        // serialize → deserialize via KeyValuePairs byte round-trip
-        let byte_len = kvps.byte_length(version);
-        let mut buf = vec![0u8; byte_len];
-        let mut b = octets::OctetsMut::with_slice(&mut buf);
-        use moq_wire::ToBytes;
-        kvps.to_bytes(&mut b, version).unwrap();
-
-        let mut b = octets::Octets::with_slice(&buf);
-        use moq_wire::FromBytes;
-        let decoded_kvps = KeyValuePairs::from_bytes(&mut b, (version, props.0.len() as u64)).unwrap();
+        // as object properties
+        let mut buf = vec![];
+        props.to_kvps().encode_uncounted(&mut version.writer(&mut buf), version).unwrap();
+        let decoded_kvps = KeyValuePairs::decode_to_end(&mut version.frame_reader(&buf), version).unwrap();
         LocProperties::from_kvps(&decoded_kvps)
     }
 

@@ -2,14 +2,17 @@
 name = "quiche_moq"
 version = "0.1.0"
 edition = "2024"
+license.workspace = true
+description = "MoQ Transport over quiche: the moq_core session on a quiche QUIC and HTTP/3 connection"
+readme = "README.md"
+repository.workspace = true
+keywords = ["moq", "quic", "media", "streaming", "webtransport"]
 
 [features]
 qlog = ["dep:qlog", "dep:serde_json", "quiche/qlog", "moq_wire/qlog", "moq_core/qlog"]
 
 [dependencies]
 moq_core = { workspace = true }
-quiche_moq_macros = { workspace = true }
-octets = { workspace = true }
 quiche = { workspace = true }
 quiche_webtransport = { workspace = true }
 moq_wire = { workspace = true }
@@ -21,4 +24,5 @@ qlog = { workspace = true, optional = true }
 serde_json = { version = "1", optional = true }
 
 [dev-dependencies]
+moq_core = { workspace = true, features = ["test-utils"] }
 quiche = { workspace = true, features = ["internal"]}

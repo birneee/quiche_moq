@@ -1,15 +1,19 @@
+use quiche_moq::OutgoingObject;
 use crate::mp4_shared_track_state;
 use crate::mp4_shared_track_state::Mp4SharedTrackState;
 use log::trace;
-use quiche_mio_runner::quiche_endpoint::quiche;
-use quiche_mio_runner::quiche_endpoint::quiche::h3;
 use quiche_moq as moq;
-use quiche_moq::wire::TrackAlias;
-use quiche_webtransport as wt;
+use quiche_moq::wire::{Location, TrackAlias};
+
+/// The whole fMP4 stream (ftype/moov/boxes) is sent as one continuous
+/// Group/Subgroup — there's only ever one join point in this simple example.
+const GROUP_ID: u64 = 0;
+const SUBGROUP_ID: u64 = 0;
 
 enum State {
-    Ftype,
-    Moov,
+    /// `sent`: payload bytes sent, `None` until the header is sent
+    Ftype { sent: Option<usize> },
+    Moov { sent: Option<usize> },
     Box {
         sent_header: bool,
         offset: usize,
@@ -17,43 +21,73 @@ enum State {
     },
 }
 
+/// Sends `buf` as one object, continuing after `sent` payload bytes (`None`:
+/// header not sent yet). `true` once complete, `false` to retry later.
+fn send_whole_object(
+    track_alias: TrackAlias,
+    next_object_id: &mut u64,
+    sent: &mut Option<usize>,
+    buf: &[u8],
+    moq: &mut moq::MoqHandle,
+) -> bool {
+    if sent.is_none() {
+        let location = Location { group: GROUP_ID, object: *next_object_id };
+        if moq.session.send_obj_hdr(track_alias, OutgoingObject::new(location, SUBGROUP_ID, buf.len()), &mut moq.t).is_err() {
+            return false;
+        }
+        *next_object_id += 1;
+        *sent = Some(0);
+    }
+    let location = Location { group: GROUP_ID, object: *next_object_id - 1 };
+    let sent = sent.as_mut().unwrap();
+    while *sent < buf.len() {
+        match moq.session.send_obj_pld(track_alias, location, &buf[*sent..], &mut moq.t) {
+            Ok(n) => *sent += n,
+            Err(_) => return false,
+        }
+    }
+    true
+}
+
 pub(crate) struct Mp4TrackState {
     track_alias: TrackAlias,
+    /// Ends the track when dropped.
+    _publication: moq::Publication,
     state: State,
+    next_object_id: u64,
 }
 
 impl Mp4TrackState {
-    pub(crate) fn new(track_alias: TrackAlias) -> Self {
+    pub(crate) fn new(publication: moq::Publication) -> Self {
         Self {
-            track_alias,
-            state: State::Ftype,
+            track_alias: publication.track_alias(),
+            _publication: publication,
+            state: State::Ftype { sent: None },
+            next_object_id: 0,
         }
     }
 
     pub fn send(
         &mut self,
         gs: &Mp4SharedTrackState,
-        moq: &mut moq::MoqTransportSession,
-        wt: &mut wt::Connection,
-        h3: &mut h3::Connection,
-        quic: &mut quiche::Connection,
+        moq: &mut moq::MoqHandle,
     ) {
         loop {
             match &mut self.state {
-                State::Ftype => {
-                    if !gs.has_ftype() {
+                State::Ftype { sent } => {
+                    if !gs.has_ftype()
+                        || !send_whole_object(self.track_alias, &mut self.next_object_id, sent, gs.ftype_box_buf.buffer(), moq)
+                    {
                         return;
                     }
-                    moq.send_obj(gs.ftype_box_buf.buffer(), self.track_alias, wt, h3, quic)
-                        .unwrap();
-                    self.state = State::Moov;
+                    self.state = State::Moov { sent: None };
                 }
-                State::Moov => {
-                    if !gs.has_moov() {
+                State::Moov { sent } => {
+                    if !gs.has_moov()
+                        || !send_whole_object(self.track_alias, &mut self.next_object_id, sent, gs.moov_box_buf.buffer(), moq)
+                    {
                         return;
                     }
-                    moq.send_obj(gs.moov_box_buf.buffer(), self.track_alias, wt, h3, quic)
-                        .unwrap();
                     self.state = State::Box {
                         offset: 0,
                         index: 0,
@@ -82,24 +116,23 @@ impl Mp4TrackState {
                         return; // nothing left to send
                     }
                     let Some(header) = header else { return };
+                    let object_id = self.next_object_id;
+                    let location = Location { group: GROUP_ID, object: object_id };
                     if !*sent_header {
-                        match moq.send_obj_hdr(header.size as usize, self.track_alias, None, wt, h3, quic)
-                        {
-                            Ok(_) => {}
+                        match moq.session.send_obj_hdr(self.track_alias, OutgoingObject::new(location, SUBGROUP_ID, header.size as usize), &mut moq.t) {
+                            Ok(()) => { self.next_object_id += 1; }
                             Err(moq::Error::UnfinishedPayload) => {
-                                moq.timeout_stream(self.track_alias, quic);
+                                moq.session.reset_send_subgroup(self.track_alias, GROUP_ID, SUBGROUP_ID, moq::wire::ResetCode::Canceled, &mut moq.t);
                                 continue;
                             }
                             Err(e) => unimplemented!("{:?}", e),
                         }
                         *sent_header = true;
                     }
-                    let n = match moq.send_obj_pld(
-                        &gs.box_buf.buffer()[*offset..],
+                    let n = match moq.session.send_obj_pld(
                         self.track_alias,
-                        wt,
-                        quic,
-                    ) {
+                        location,
+                        &gs.box_buf.buffer()[*offset..], &mut moq.t) {
                         Ok(v) => v,
                         Err(moq::Error::Done) => return,
                         Err(e) => unimplemented!("{:?}", e),

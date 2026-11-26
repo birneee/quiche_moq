@@ -12,6 +12,9 @@ pub struct MoqPipe {
     s_h3: h3::Connection,
     s_wt: wt::Connection,
     s_moq: MoqTransportSession,
+    /// Kept alive for the test, dropping them would end them.
+    pub subscriptions: Vec<moq_core::Subscription>,
+    pub publications: Vec<moq_core::Publication>,
 }
 
 impl MoqPipe {
@@ -24,13 +27,9 @@ impl MoqPipe {
     }
 
     pub fn advance(&mut self) -> Result<(), quiche::Error> {
-        // Flush state set by app logic (or a prior handle) before the next handle().
-        self.client().post_handle();
-        self.server().post_handle();
         self.pipe.advance()?;
         self.client().poll_all();
         self.server().poll_all();
-        // dirty=true after poll_all; caller does app logic then calls post_handle.
         Ok(())
     }
 }
@@ -53,15 +52,13 @@ pub fn init_moq_pipe(config: Config) -> MoqPipe {
     let session_id = *s_wt.readable_sessions().first().unwrap();
     let mut s_moq = MoqTransportSession::accept(session_id.into(), config.clone()).unwrap();
     s_moq.handle(&mut s_wt, &mut s_h3, &mut pipe.server);
-    s_moq.post_handle(&mut pipe.server, &mut s_h3, &mut s_wt);
-    assert!(s_moq.initialized());
+    assert!(s_moq.session().initialized());
 
     pipe.advance().unwrap();
 
     c_wt.poll(&mut c_h3, &mut pipe.client);
     c_moq.handle(&mut c_wt, &mut c_h3, &mut pipe.client);
-    c_moq.post_handle(&mut pipe.client, &mut c_h3, &mut c_wt);
-    assert!(c_moq.initialized());
+    assert!(c_moq.session().initialized());
 
-    MoqPipe { pipe, c_h3, c_wt, c_moq, s_h3, s_wt, s_moq }
+    MoqPipe { pipe, c_h3, c_wt, c_moq, s_h3, s_wt, s_moq, subscriptions: vec![], publications: vec![] }
 }

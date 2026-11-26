@@ -1,11 +1,12 @@
 //! `moq_core::Transport` implementation bridging the synchronous MoQ session
 //! state machine to the browser's async `WebTransport` streams. Reads are
 //! pre-buffered by background reader tasks (spawned here and in `lib.rs`)
-//! into `recv_bufs`/`recv_fins`; writes are queued in `send_bufs` and
+//! into `recv_bufs`/`recv_ends`; writes are queued in `send_bufs` and
 //! flushed with `flush_sends`.
 
 use crate::util::js_bool;
 use moq_core::{StreamError, Transport};
+use moq_core::wire::{ResetCode, SessionCloseCode};
 use moq_core_async::{AsyncTransport, Notify};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -17,7 +18,7 @@ use web_sys::js_sys::{ArrayBuffer, Reflect, Uint8Array};
 use web_sys::{
     ReadableStream, ReadableStreamByobReader, ReadableStreamDefaultReader,
     ReadableStreamGetReaderOptions, ReadableStreamReaderMode, WebTransport,
-    WebTransportBidirectionalStream, WritableStream, WritableStreamDefaultWriter,
+    WebTransportBidirectionalStream, WebTransportCloseInfo, WritableStream, WritableStreamDefaultWriter,
 };
 
 /// The control stream: for draft < 17 this is a single shared bidi stream
@@ -27,8 +28,48 @@ use web_sys::{
 pub(crate) const CTRL_STREAM_ID: u64 = 0;
 
 pub(crate) type SharedRecvBufs = Rc<RefCell<HashMap<u64, Vec<u8>>>>;
-pub(crate) type SharedRecvFins = Rc<RefCell<HashSet<u64>>>;
-type SharedWriters = Rc<RefCell<HashMap<u64, WritableStreamDefaultWriter>>>;
+/// How each received stream ended, reported once its bytes are read.
+pub(crate) type SharedRecvEnds = Rc<RefCell<HashMap<u64, RecvEnd>>>;
+
+/// How a received stream ended.
+#[derive(Clone, Copy)]
+pub(crate) enum RecvEnd {
+    Fin,
+    /// the browser doesn't expose the reset code
+    Reset,
+}
+type SharedWriters = Rc<RefCell<Writers>>;
+
+/// Writers of our streams, registered once their async creation resolves.
+#[derive(Default)]
+struct Writers {
+    open: HashMap<u64, WritableStreamDefaultWriter>,
+    /// Reset before their writer existed.
+    reset: HashSet<u64>,
+    /// Stopped by the peer (STOP_SENDING), reported by `stream_stopped`.
+    stopped: HashSet<u64>,
+}
+
+/// Keeps `writer`, or aborts it if its stream was reset meanwhile. Its `closed` rejecting while it is still
+/// open, neither closed nor aborted by us, is the peer's STOP_SENDING.
+fn register_writer(writers: &SharedWriters, stream_id: u64, writer: WritableStreamDefaultWriter, wake: &Notify) {
+    if writers.borrow_mut().reset.remove(&stream_id) {
+        let _ = writer.abort();
+        return;
+    }
+    let closed = writer.closed();
+    writers.borrow_mut().open.insert(stream_id, writer);
+    let (writers, wake) = (writers.clone(), wake.clone());
+    spawn_local(async move {
+        if JsFuture::from(closed).await.is_err() {
+            let mut writers = writers.borrow_mut();
+            if writers.open.contains_key(&stream_id) {
+                writers.stopped.insert(stream_id);
+                wake.notify();
+            }
+        }
+    });
+}
 
 /// Scratch buffer size for BYOB reads. Reused across reads on the same
 /// stream, so this is a one-time allocation per stream, not per chunk. Sized
@@ -37,7 +78,7 @@ type SharedWriters = Rc<RefCell<HashMap<u64, WritableStreamDefaultWriter>>>;
 const READ_CHUNK_SIZE: u32 = 1024 * 1024;
 
 /// Spawn a background task that reads `stream` to completion, buffering bytes
-/// into `recv_bufs[stream_id]` and marking `recv_fins` on EOF, waking the
+/// into `recv_bufs[stream_id]` and marking `recv_ends` on EOF or reset, waking the
 /// session loop after each read. Used for both the pre-opened control stream
 /// (`BrowserWebTransport::spawn_reader`) and each newly accepted incoming uni
 /// stream (`lib.rs`'s stream acceptor task) — a stream is a stream once it has
@@ -55,7 +96,7 @@ const READ_CHUNK_SIZE: u32 = 1024 * 1024;
 /// in flight).
 pub(crate) fn spawn_stream_reader(
     recv_bufs: SharedRecvBufs,
-    recv_fins: SharedRecvFins,
+    recv_ends: SharedRecvEnds,
     stream_id: u64,
     stream: ReadableStream,
     wake: Notify,
@@ -74,19 +115,24 @@ pub(crate) fn spawn_stream_reader(
         let mut buffer = ArrayBuffer::new(READ_CHUNK_SIZE);
         loop {
             let view = Uint8Array::new_with_byte_offset_and_length(&buffer, 0, READ_CHUNK_SIZE);
-            let res = match JsFuture::from(reader.read_with_array_buffer_view(&view)).await {
-                Ok(r) => r,
-                Err(_) => break,
+            let end = |end| {
+                recv_ends.borrow_mut().insert(stream_id, end);
+                wake.notify();
+            };
+            // a failed read is the stream being reset: not complete
+            let Ok(res) = JsFuture::from(reader.read_with_array_buffer_view(&view)).await else {
+                end(RecvEnd::Reset);
+                break;
             };
             if js_bool(&res, "done") {
-                recv_fins.borrow_mut().insert(stream_id);
-                wake.notify();
+                end(RecvEnd::Fin);
                 break;
             }
             let Some(arr) = Reflect::get(&res, &"value".into())
                 .ok()
                 .and_then(|v| v.dyn_into::<Uint8Array>().ok())
             else {
+                end(RecvEnd::Reset);
                 break;
             };
 
@@ -108,19 +154,23 @@ pub(crate) fn spawn_stream_reader(
 
 pub(crate) struct BrowserWebTransport {
     pub(crate) recv_bufs: SharedRecvBufs,
-    pub(crate) recv_fins: SharedRecvFins,
-    /// Streams whose FIN has been reported to the session. Their bookkeeping is
+    pub(crate) recv_ends: SharedRecvEnds,
+    /// Streams whose end (FIN or reset) has been reported to the session. Their bookkeeping is
     /// dropped in `retire_finished_streams`; without that they would stay in
     /// `recv_bufs` forever and the session would keep re-creating an `InStream`
     /// for each of them on every wake.
     recv_retired: HashSet<u64>,
-    send_bufs: HashMap<u64, Vec<u8>>,
+    /// Queued bytes per stream, and whether a FIN follows them.
+    send_bufs: HashMap<u64, (Vec<u8>, bool)>,
+    /// Streams closed (FIN) by `flush_sends`, reported once by `stream_finished`.
+    /// - the browser doesn't report delivery, a closed writer is the last thing we see
+    send_finished: RefCell<HashSet<u64>>,
     /// Shared with the async tasks spawned by `open_uni_stream`/`open_bidi_stream`,
     /// which register a writer here once the (necessarily async) JS-side stream
     /// creation resolves. Until then, `flush_sends` just leaves queued bytes for
     /// that stream id in `send_bufs` and retries on the next call.
     writers: SharedWriters,
-    wt: WebTransport,
+    pub(crate) wt: WebTransport,
     wake: Notify,
     /// Client-initiated bidi stream ids: 0, 4, 8, ... (QUIC stream id scheme:
     /// bit0=0 client, bit1=0 bidi).
@@ -133,10 +183,11 @@ impl BrowserWebTransport {
     pub(crate) fn new(wt: WebTransport, wake: Notify) -> Self {
         Self {
             recv_bufs: Rc::new(RefCell::new(HashMap::new())),
-            recv_fins: Rc::new(RefCell::new(HashSet::new())),
+            recv_ends: Rc::new(RefCell::new(HashMap::new())),
             recv_retired: HashSet::new(),
             send_bufs: HashMap::new(),
-            writers: Rc::new(RefCell::new(HashMap::new())),
+            send_finished: RefCell::new(HashSet::new()),
+            writers: Rc::default(),
             wt,
             wake,
             next_bidi_id: 0,
@@ -151,26 +202,35 @@ impl BrowserWebTransport {
             return;
         }
         let mut recv_bufs = self.recv_bufs.borrow_mut();
-        let mut recv_fins = self.recv_fins.borrow_mut();
+        let mut recv_ends = self.recv_ends.borrow_mut();
         for stream_id in self.recv_retired.drain() {
             recv_bufs.remove(&stream_id);
-            recv_fins.remove(&stream_id);
+            recv_ends.remove(&stream_id);
         }
     }
 
     pub(crate) async fn flush_sends(&mut self) -> Result<(), JsValue> {
         let pending = std::mem::take(&mut self.send_bufs);
-        for (stream_id, data) in pending {
-            let writer = self.writers.borrow().get(&stream_id).cloned();
+        for (stream_id, (data, fin)) in pending {
+            let writer = self.writers.borrow().open.get(&stream_id).cloned();
             match writer {
                 Some(writer) => {
-                    let arr = Uint8Array::from(data.as_slice());
-                    JsFuture::from(writer.write_with_chunk(&arr)).await?;
+                    if !data.is_empty() {
+                        let arr = Uint8Array::from(data.as_slice());
+                        JsFuture::from(writer.write_with_chunk(&arr)).await?;
+                    }
+                    if fin {
+                        self.writers.borrow_mut().open.remove(&stream_id);
+                        JsFuture::from(writer.close()).await?;
+                        self.send_finished.borrow_mut().insert(stream_id);
+                    }
                 }
                 // JS-side stream creation (spawned by open_uni_stream/open_bidi_stream)
                 // hasn't resolved yet — requeue for the next flush.
                 None => {
-                    self.send_bufs.entry(stream_id).or_default().extend(data);
+                    let queued = self.send_bufs.entry(stream_id).or_default();
+                    queued.0.extend(data);
+                    queued.1 |= fin;
                 }
             }
         }
@@ -190,16 +250,16 @@ impl Transport for BrowserWebTransport {
             Some(b) => b,
         };
         if stream_buf.is_empty() {
-            return if self.recv_fins.borrow().contains(&stream_id) {
-                // Fully drained and FIN'd: the session drops its InStream on
-                // seeing this, so the entry can be retired after the poll.
-                if stream_id != CTRL_STREAM_ID {
-                    self.recv_retired.insert(stream_id);
-                }
-                Err(StreamError::Fin)
-            } else {
-                Err(StreamError::Done)
-            };
+            let Some(&end) = self.recv_ends.borrow().get(&stream_id) else { return Err(StreamError::Done) };
+            // Fully drained and ended: the session drops its InStream on
+            // seeing this, so the entry can be retired after the poll.
+            if stream_id != CTRL_STREAM_ID {
+                self.recv_retired.insert(stream_id);
+            }
+            return Err(match end {
+                RecvEnd::Fin => StreamError::Fin,
+                RecvEnd::Reset => StreamError::StreamReset(0),
+            });
         }
         let n = stream_buf.len().min(buf.len());
         buf[..n].copy_from_slice(&stream_buf[..n]);
@@ -207,8 +267,10 @@ impl Transport for BrowserWebTransport {
         Ok(n)
     }
 
-    fn send_stream(&mut self, stream_id: u64, data: &[u8], _fin: bool) -> Result<usize, StreamError> {
-        self.send_bufs.entry(stream_id).or_default().extend_from_slice(data);
+    fn send_stream(&mut self, stream_id: u64, data: &[u8], fin: bool) -> Result<usize, StreamError> {
+        let queued = self.send_bufs.entry(stream_id).or_default();
+        queued.0.extend_from_slice(data);
+        queued.1 |= fin;
         Ok(data.len())
     }
 
@@ -238,7 +300,7 @@ impl Transport for BrowserWebTransport {
             let Ok(stream) = JsFuture::from(wt.create_unidirectional_stream()).await else { return };
             let Ok(writable) = stream.dyn_into::<WritableStream>() else { return };
             let Ok(writer) = writable.get_writer() else { return };
-            writers.borrow_mut().insert(id, writer);
+            register_writer(&writers, id, writer, &wake);
             wake.notify();
         });
         Ok(id)
@@ -255,7 +317,7 @@ impl Transport for BrowserWebTransport {
         let wt = self.wt.clone();
         let writers = self.writers.clone();
         let recv_bufs = self.recv_bufs.clone();
-        let recv_fins = self.recv_fins.clone();
+        let recv_ends = self.recv_ends.clone();
         let wake = self.wake.clone();
         spawn_local(async move {
             let Ok(bidi) = JsFuture::from(wt.create_bidirectional_stream()).await else { return };
@@ -267,20 +329,48 @@ impl Transport for BrowserWebTransport {
                 .and_then(|v| v.dyn_into::<ReadableStream>())
             else { return };
             let Ok(writer) = writable.get_writer() else { return };
-            writers.borrow_mut().insert(id, writer);
+            register_writer(&writers, id, writer, &wake);
             wake.notify();
-            spawn_stream_reader(recv_bufs, recv_fins, id, readable, wake);
+            spawn_stream_reader(recv_bufs, recv_ends, id, readable, wake);
         });
         Ok(id)
     }
 
     fn set_stream_priority(&mut self, _stream_id: u64, _urgency: u8, _incremental: bool) {}
-    fn reset_stream(&mut self, _stream_id: u64, _error_code: u64) {}
-    fn stop_sending(&mut self, _stream_id: u64, _error_code: u64) {}
-    fn close_session(&mut self, _error_code: u64, _reason: &str) {}
+
+    /// Aborts the writer, also one still being created. The browser doesn't expose the reset code.
+    fn reset_stream(&mut self, stream_id: u64, _code: ResetCode) {
+        self.send_bufs.remove(&stream_id);
+        let mut writers = self.writers.borrow_mut();
+        match writers.open.remove(&stream_id) {
+            Some(writer) => { let _ = writer.abort(); }
+            None => { writers.reset.insert(stream_id); }
+        }
+    }
+
+    /// Ignored, the session drains the stream until it ends.
+    fn stop_sending(&mut self, _stream_id: u64, _code: ResetCode) -> bool {
+        false
+    }
+    fn stream_stopped(&mut self, stream_id: u64) -> bool {
+        self.writers.borrow().stopped.contains(&stream_id)
+    }
+    /// The browser truncates `reason` to the 1024 bytes WebTransport allows.
+    fn close_session(&mut self, code: SessionCloseCode, reason: &str) {
+        let info = WebTransportCloseInfo::new();
+        info.set_close_code(code.into());
+        info.set_reason(reason);
+        self.wt.close_with_close_info(&info);
+    }
+
+    /// True once for a stream `flush_sends` closed, the session forgets it then.
+    fn stream_finished(&self, stream_id: u64) -> bool {
+        self.send_finished.borrow_mut().remove(&stream_id)
+    }
 }
 
 impl AsyncTransport for BrowserWebTransport {
+    type DropQueue = moq_core::LocalDropQueue;
     type FlushError = JsValue;
 
     fn readable_stream_ids(&self) -> Vec<u64> {
@@ -309,17 +399,17 @@ impl AsyncTransport for BrowserWebTransport {
 
         let wake = Notify::new();
         let t = BrowserWebTransport::new(wt.clone(), wake.clone());
-        spawn_incoming_stream_acceptor(&wt, t.recv_bufs.clone(), t.recv_fins.clone(), wake.clone())?;
+        spawn_incoming_stream_acceptor(&wt, t.recv_bufs.clone(), t.recv_ends.clone(), wake.clone())?;
         Ok((t, wake))
     }
 }
 
-/// Spawns the task that accepts server-initiated uni streams (SUBSCRIBE_OK
-/// responses on draft 17+'s per-request streams, and track data streams).
+/// Spawns the task that accepts server-initiated uni streams: draft 17+'s control stream and track data streams.
+// TODO server-initiated bidi streams, draft 17+ request streams such as PUBLISH, until then they are never read
 fn spawn_incoming_stream_acceptor(
     wt: &WebTransport,
     recv_bufs: SharedRecvBufs,
-    recv_fins: SharedRecvFins,
+    recv_ends: SharedRecvEnds,
     wake: Notify,
 ) -> Result<(), JsValue> {
     let incoming_reader = wt
@@ -353,7 +443,7 @@ fn spawn_incoming_stream_acceptor(
             recv_bufs.borrow_mut().entry(stream_id).or_default();
             wake.notify();
 
-            spawn_stream_reader(recv_bufs.clone(), recv_fins.clone(), stream_id, stream, wake.clone());
+            spawn_stream_reader(recv_bufs.clone(), recv_ends.clone(), stream_id, stream, wake.clone());
         }
     });
     Ok(())

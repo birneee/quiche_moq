@@ -17,6 +17,10 @@ use crate::notify::Notify;
 pub trait AsyncTransport: Transport + Sized {
     type FlushError;
 
+    /// `moq_core::SharedDropQueue` if the session moves between threads,
+    /// see moq_core's README.
+    type DropQueue: moq_core::DropQueue;
+
     /// Stream ids with buffered data ready to read right now.
     fn readable_stream_ids(&self) -> Vec<u64>;
 

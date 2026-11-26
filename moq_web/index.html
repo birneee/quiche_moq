@@ -32,19 +32,39 @@
       white-space: pre-wrap;
       max-width: 80ch;
     }
+    .panel-group {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      justify-content: center;
+      max-width: 90vw;
+    }
+    .panel-group canvas {
+      max-height: none;
+      background: none;
+    }
+    .panel-group-label {
+      width: 100%;
+      text-align: center;
+      font-size: 12px;
+      color: #888;
+    }
   </style>
 </head>
 <body>
   <canvas id="canvas" width="1280" height="720"></canvas>
   <button id="unmute">🔇 Unmute</button>
   <div id="status">Connecting…</div>
+  <div id="panels"></div>
   <div id="error"></div>
 
+  <script src="stats.min.js"></script>
   <script type="module">
     import init, { MoqSession, unmute } from './moq_web.js';
 
     const canvas   = document.getElementById('canvas');
     const status   = document.getElementById('status');
+    const panelsEl = document.getElementById('panels');
     const errEl    = document.getElementById('error');
     const unmuteEl = document.getElementById('unmute');
 
@@ -57,6 +77,8 @@
     // supported version). See moq_cli's --setup-version for the same knob
     // outside the browser.
     const draft  = params.get('draft') ?? '';
+    // Logs every stat as JSON every N ms, e.g. ?log=2000; `moqStats()` in the console logs one snapshot.
+    const logEveryMs = Number(params.get('log') ?? 0);
 
     await init();
 
@@ -76,6 +98,122 @@
       // Audio is not scheduled until "Unmute" is clicked, since browsers
       // require a user gesture for audible audio.
       status.textContent = 'Playing';
+
+      startStats(session, { video: videoTrack, audio: audioTrack });
+    }
+
+    // One stats.js panel per field: `value` shows it as is, `delta` and `rate` turn a cumulative counter into its
+    // change per poll or per second, `scale` multiplies the result.
+    const SESSION_PANELS = [
+      { key: 'receivedTracks', label: 'rx tracks', mode: 'value', fg: '#0ff', bg: '#022' },
+      { key: 'sentTracks',     label: 'tx tracks', mode: 'value', fg: '#0f0', bg: '#020' },
+      { key: 'dataStreams',    label: 'streams',   mode: 'value', fg: '#ff0', bg: '#220' },
+    ];
+    const TRACK_PANELS = [
+      { key: 'ready',        label: 'ready',     mode: 'value', fg: '#0ff', bg: '#022' },
+      { key: 'cached',       label: 'cached',    mode: 'value', fg: '#0ff', bg: '#022' },
+      { key: 'progressing',  label: 'arriving',  mode: 'value', fg: '#f80', bg: '#210' },
+      { key: 'groupsBehind', label: 'behind g',  mode: 'value', fg: '#f33', bg: '#200' },
+      { key: 'bytes',        label: 'kbps',      mode: 'rate',  fg: '#0f0', bg: '#020', scale: 8 / 1000 },
+      { key: 'objects',      label: 'obj/s',     mode: 'rate',  fg: '#ff0', bg: '#220' },
+      { key: 'discarded',    label: 'discarded', mode: 'delta', fg: '#f80', bg: '#210' },
+      { key: 'skipped',      label: 'skipped',   mode: 'delta', fg: '#f33', bg: '#200' },
+    ];
+    const TRANSPORT_PANELS = [
+      { key: 'bytesSent',                 label: 'tx B/s',      mode: 'rate',  fg: '#0ff', bg: '#022' },
+      { key: 'bytesReceived',             label: 'rx B/s',      mode: 'rate',  fg: '#0ff', bg: '#022' },
+      { key: 'packetsSent',               label: 'tx pkt/s',    mode: 'rate',  fg: '#0f0', bg: '#020' },
+      { key: 'packetsReceived',           label: 'rx pkt/s',    mode: 'rate',  fg: '#0f0', bg: '#020' },
+      { key: 'packetsLost',               label: 'lost pkt',    mode: 'delta', fg: '#f33', bg: '#200' },
+      { key: 'smoothedRtt',               label: 'rtt ms',      mode: 'value', fg: '#f0f', bg: '#202' },
+      { key: 'rttVariation',              label: 'rtt var ms',  mode: 'value', fg: '#f0f', bg: '#202' },
+      { key: 'minRtt',                    label: 'min rtt ms',  mode: 'value', fg: '#f0f', bg: '#202' },
+      { key: 'numIncomingStreamsCreated', label: 'in streams',  mode: 'delta', fg: '#ff0', bg: '#220' },
+      { key: 'numOutgoingStreamsCreated', label: 'out streams', mode: 'delta', fg: '#ff0', bg: '#220' },
+      { key: 'datagramsDroppedIncoming',  label: 'dg drop in',  mode: 'delta', fg: '#f80', bg: '#210' },
+      { key: 'datagramsExpiredOutgoing',  label: 'dg exp out',  mode: 'delta', fg: '#f80', bg: '#210' },
+      { key: 'datagramsLostOutgoing',     label: 'dg lost out', mode: 'delta', fg: '#f80', bg: '#210' },
+    ];
+    // polls a field may stay unreported before its panel is dimmed, e.g. Chromium's getStats() reports only RTTs
+    const UNREPORTED_AFTER = 3;
+
+    // A labelled row of panels, returns `update(values, now)`.
+    function panelGroup(title, panels) {
+      const label = document.createElement('div');
+      label.className = 'panel-group-label';
+      label.textContent = title;
+      const row = document.createElement('div');
+      row.className = 'panel-group';
+      panelsEl.append(label, row);
+      const state = panels.map(cfg => {
+        const panel = new Stats.Panel(cfg.label, cfg.fg, cfg.bg);
+        row.appendChild(panel.dom);
+        return { cfg, panel, max: 1, prev: undefined, prevT: undefined, polls: 0, reported: false };
+      });
+      return (values, now) => {
+        for (const st of state) {
+          const v = values[st.cfg.key];
+          st.polls++;
+          if (v === undefined) {
+            if (!st.reported && st.polls >= UNREPORTED_AFTER) {
+              st.panel.dom.style.opacity = '0.3';
+              st.panel.dom.title = 'not reported by this browser';
+            }
+            continue;
+          }
+          st.reported = true;
+          st.panel.dom.style.opacity = '1';
+          st.panel.dom.title = '';
+          let value = v;
+          if (st.cfg.mode !== 'value') {
+            const delta = st.prev === undefined ? 0 : v - st.prev;
+            const seconds = st.prevT === undefined ? 0 : (now - st.prevT) / 1000;
+            value = st.cfg.mode === 'rate' ? (seconds > 0 ? delta / seconds : 0) : delta;
+            st.prev = v;
+            st.prevT = now;
+          }
+          value *= st.cfg.scale ?? 1;
+          st.max = Math.max(st.max, value * 1.2);
+          st.panel.update(value, st.max);
+        }
+      };
+    }
+
+    function startStats(session, tracks) {
+      const updateSession = panelGroup('MoQ session', SESSION_PANELS);
+      const updateTracks = Object.fromEntries(Object.keys(tracks).map(name => [name, panelGroup(name, TRACK_PANELS)]));
+      const updateTransport = panelGroup('WebTransport', TRANSPORT_PANELS);
+      let transport = {};
+
+      const snapshot = () => ({
+        at: new Date().toISOString(),
+        session: session.session_stats(),
+        tracks: Object.fromEntries(Object.entries(tracks).map(([name, track]) =>
+          [name, track.stats()])),
+        transport,
+      });
+      globalThis.moqStats = () => {
+        const s = snapshot();
+        console.log(JSON.stringify(s, null, 2));
+        return s;
+      };
+      if (logEveryMs > 0) {
+        setInterval(() => console.log(JSON.stringify(snapshot())), logEveryMs);
+      }
+
+      setInterval(async () => {
+        const now = performance.now();
+        updateSession(session.session_stats(), now);
+        for (const [name, track] of Object.entries(tracks)) {
+          updateTracks[name](track.stats(), now);
+        }
+        try {
+          transport = await session.transport_stats();
+          updateTransport(transport, now);
+        } catch (e) {
+          console.error('transport_stats() failed:', e);
+        }
+      }, 500);
     }
 
     play().catch(e => {

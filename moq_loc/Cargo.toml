@@ -2,7 +2,11 @@
 name = "moq_loc"
 version = "0.1.0"
 edition = "2024"
+license.workspace = true
+description = "Typed Low Overhead Media Container (LOC) properties of MoQ objects"
+readme = "README.md"
+repository.workspace = true
+keywords = ["moq", "quic", "media", "streaming", "webtransport"]
 
 [dependencies]
-octets = { workspace = true }
 moq_wire = { workspace = true }

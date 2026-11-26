@@ -5,12 +5,12 @@ mod mp4_track_state;
 
 use crate::mp4_shared_track_state::Mp4SharedTrackState;
 use crate::mp4_track_state::Mp4TrackState;
-use log::{debug, info};
+use log::info;
 use mio::unix::pipe::Receiver;
 use mio::Interest;
 use quiche_mio_runner::quiche_endpoint::quiche::{h3, PROTOCOL_VERSION};
 use quiche_mio_runner::quiche_endpoint::{quiche, EndpointConfig, ServerConfig};
-use quiche_h3_utils::{hdrs_to_strings, ALPN_HTTP_3};
+use quiche_h3_utils::ALPN_HTTP_3;
 use quiche_mio_runner as runner;
 use quiche_mio_runner::{quiche_endpoint, Socket};
 use quiche_moq as moq;
@@ -168,22 +168,8 @@ fn post_handle_recvs(runner: &mut Runner) {
                 conn.app_data.h3_conn.as_mut().unwrap()
             }
         };
-        loop {
-            match h3_conn.poll(quic_conn) {
-                Ok((stream_id, h3::Event::Headers { list, .. })) => {
-                    debug!(
-                        "h3 stream {} received headers: {:?}",
-                        stream_id,
-                        hdrs_to_strings(&list)
-                    );
-                    conn.app_data.wt_conn.recv_hdrs(stream_id, &list);
-                }
-                Ok(e) => unimplemented!("{:?}", e),
-                Err(h3::Error::Done) => break,
-                Err(e) => unimplemented!("{:?}", e),
-            }
-        }
         let wt_conn = &mut conn.app_data.wt_conn;
+        wt_conn.poll_h3(h3_conn, quic_conn);
         wt_conn.poll(h3_conn, quic_conn);
 
         let moq = match conn.app_data.moq_session.as_mut() {
@@ -198,17 +184,14 @@ fn post_handle_recvs(runner: &mut Runner) {
             }
         };
         moq.handle(wt_conn, h3_conn, quic_conn);
-        let mut new_aliases: Vec<quiche_moq::wire::TrackAlias> = Vec::new();
-        moq.process_subscription_requests(|_request_id, sub, track_alias| {
-            assert_eq!(sub.track_namespace().0.0, [b"testsrc"]);
-            assert_eq!(sub.track_name(), b"mp4");
-            new_aliases.push(track_alias);
-            quiche_moq::SubscriptionRequestAction::Accept
-        }, wt_conn, quic_conn);
-        for track_alias in new_aliases {
-            conn.app_data
-                .tracks
-                .insert(track_alias, Mp4TrackState::new(track_alias));
+        let (moq, mut t) = moq.core(wt_conn, h3_conn, quic_conn);
+        // other requests are dropped, which rejects them
+        while let Some(event) = moq.next_event() {
+            let quiche_moq::Event::Request(quiche_moq::IncomingRequest::Subscribe(request)) = event else { continue };
+            assert_eq!(request.message().track_namespace().fields(), [b"testsrc"]);
+            assert_eq!(request.message().track_name(), b"mp4");
+            let publication = moq.accept_request(request, quiche_moq::SubscribeOk::default(), &mut t).unwrap();
+            conn.app_data.tracks.insert(publication.track_alias(), Mp4TrackState::new(publication));
         }
     }
     send_video(runner);
@@ -238,9 +221,10 @@ fn send_video(runner: &mut Runner) {
             let Some(moq) = conn.app_data.moq_session.as_mut() else {
                 continue;
             };
-            for ta in moq.writable() {
+            let mut moq = quiche_moq::MoqHandle::new(moq, quic, h3, wt);
+            for ta in moq.session.writable() {
                 let mp4_track = conn.app_data.tracks.get_mut(&ta).unwrap();
-                mp4_track.send(&app_data.track, moq, wt, h3, quic)
+                mp4_track.send(&app_data.track, &mut moq)
             }
         }
     }

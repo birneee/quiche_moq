@@ -2,8 +2,13 @@
 name = "quiche_webtransport"
 version = "0.1.0"
 edition = "2024"
+license.workspace = true
+description = "WebTransport over HTTP/3 on quiche"
+readme = "README.md"
+repository.workspace = true
 
 [dependencies]
+rustc-hash = { workspace = true }
 quiche = { workspace = true , features = ["boringssl-boring-crate", "internal"]}
 octets = { workspace = true }
 short_buf = { workspace = true }

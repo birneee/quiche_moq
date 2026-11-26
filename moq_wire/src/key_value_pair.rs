@@ -1,128 +1,111 @@
-use crate::bytes::{FromBytes, ToBytes};
-use crate::error::Error;
-use crate::vi64;
-use crate::version;
-use crate::Version;
-use octets::{Octets, OctetsMut};
+use crate::prelude::*;
+use crate::error::{Error, Result};
+use crate::{Mode, Reader, VarIntForm, Version, Writer};
+use moq_wire_primitives::BoundedBytes;
 
-/// Context for reading/writing Key-Value-Pairs.
-/// In draft-15+ the type field is delta-encoded relative to the previous key in the sequence.
-/// Set `previous_key` to 0 for the first KVP in a sequence.
-#[derive(Clone, Copy)]
-pub(crate) struct KvpCtx {
-    pub(crate) version: Version,
-    pub(crate) previous_key: u64,
+/// The longest value of a pair from draft 11 (draft-ietf-moq-transport-19 §1.4.2).
+const MAX_VALUE_LEN: usize = u16::MAX as usize;
+
+/// Type of a pair holding a varint, even (draft-ietf-moq-transport-16 §1.4.2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct VarintKey(u64);
+
+/// Type of a pair holding bytes, odd (draft-ietf-moq-transport-16 §1.4.2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct BytesKey(u64);
+
+impl VarintKey {
+    /// Panics if `ty` is odd, in a `const` at compile time.
+    pub const fn new(ty: u64) -> Self {
+        assert!(ty.is_multiple_of(2), "the type of a varint pair is even");
+        Self(ty)
+    }
+
+    pub const fn get(self) -> u64 {
+        self.0
+    }
 }
 
-impl KvpCtx {
-    pub(crate) fn new(version: Version) -> Self {
-        Self { version, previous_key: 0 }
+impl BytesKey {
+    /// Panics if `ty` is even, in a `const` at compile time.
+    pub const fn new(ty: u64) -> Self {
+        assert!(!ty.is_multiple_of(2), "the type of a bytes pair is odd");
+        Self(ty)
     }
-    pub(crate) fn with_previous_key(self, previous_key: u64) -> Self {
-        Self { previous_key, ..self }
+
+    pub const fn get(self) -> u64 {
+        self.0
     }
 }
 
-/// https://www.ietf.org/archive/id/draft-ietf-moq-transport-11.html#name-key-value-pair-structure
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub struct KeyValuePair {
-    pub(crate) ty: u64,
-    pub(crate) value: KeyValuePairValue,
+/// A parameter or property: even types hold a varint, odd types bytes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum KeyValuePair {
+    Varint(VarintKey, u64),
+    Bytes(BytesKey, Vec<u8>),
 }
 
 impl KeyValuePair {
-    /// Create a varint KVP. `ty` must be even; returns an error otherwise.
-    pub fn new_varint(ty: u64, value: u64) -> crate::Result<Self> {
-        if !ty.is_multiple_of(2) {
-            return Err(Error::ProtocolViolation(format!("varint KVP type must be even, got 0x{ty:x}")));
-        }
-        Ok(Self { ty, value: KeyValuePairValue::Varint(value) })
+    /// `None` if `ty` is odd.
+    pub(crate) fn new_varint(ty: u64, v: u64) -> Option<Self> {
+        ty.is_multiple_of(2).then_some(Self::Varint(VarintKey(ty), v))
     }
 
-    /// Create a byte-string KVP. `ty` must be odd; returns an error otherwise.
-    pub fn new_bytes(ty: u64, value: Vec<u8>) -> crate::Result<Self> {
-        if ty.is_multiple_of(2) {
-            return Err(Error::ProtocolViolation(format!("byte-string KVP type must be odd, got 0x{ty:x}")));
-        }
-        Ok(Self { ty, value: KeyValuePairValue::Bytes(value) })
+    /// `None` if `ty` is even.
+    pub(crate) fn new_bytes(ty: u64, v: Vec<u8>) -> Option<Self> {
+        (!ty.is_multiple_of(2)).then_some(Self::Bytes(BytesKey(ty), v))
     }
 
     pub fn ty(&self) -> u64 {
-        self.ty
-    }
-
-    pub fn value(&self) -> &KeyValuePairValue {
-        &self.value
-    }
-
-    /// Returns the encoded byte length of this KVP for the given context.
-    pub(crate) fn byte_length(&self, ctx: KvpCtx) -> usize {
-        let type_field = if version::kvp_type_delta_encoded(ctx.version) {
-            self.ty - ctx.previous_key
-        } else {
-            self.ty
-        };
-        vi64::varint_len(type_field, ctx.version) + match &self.value {
-            KeyValuePairValue::Varint(v) => vi64::varint_len(*v, ctx.version),
-            KeyValuePairValue::Bytes(b) => vi64::varint_len(b.len() as u64, ctx.version) + b.len(),
+        match self {
+            Self::Varint(key, _) => key.0,
+            Self::Bytes(key, _) => key.0,
         }
     }
-}
 
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub enum KeyValuePairValue {
-    Varint(u64),
-    Bytes(Vec<u8>),
-}
-
-impl TryInto<u64> for KeyValuePairValue {
-    type Error = ();
-
-    fn try_into(self) -> Result<u64, Self::Error> {
-        let KeyValuePairValue::Varint(value) = self else { return Err(()) };
-        Ok(value)
-    }
-}
-
-impl TryInto<Vec<u8>> for KeyValuePairValue {
-    type Error = ();
-
-    fn try_into(self) -> Result<Vec<u8>, Self::Error> {
-        let KeyValuePairValue::Bytes(value) = self else { return Err(()) };
-        Ok(value)
-    }
-}
-
-impl FromBytes<KvpCtx> for KeyValuePair {
-    fn from_bytes(b: &mut Octets, ctx: KvpCtx) -> crate::error::Result<Self> {
-        let ty = if version::kvp_type_delta_encoded(ctx.version) {
-            ctx.previous_key + vi64::read_varint(b, ctx.version)?
-        } else {
-            vi64::read_varint(b, ctx.version)?
-        };
-        let value = if ty % 2 == 0 {
-            KeyValuePairValue::Varint(vi64::read_varint(b, ctx.version)?)
-        } else {
-            let len = vi64::read_varint(b, ctx.version)? as usize;
-            KeyValuePairValue::Bytes(b.get_bytes(len)?.to_vec())
-        };
-        Ok(Self { ty, value })
-    }
-}
-
-impl ToBytes<KvpCtx> for KeyValuePair {
-    fn to_bytes(&self, b: &mut OctetsMut, ctx: KvpCtx) -> crate::error::Result<()> {
-        if version::kvp_type_delta_encoded(ctx.version) {
-            vi64::write_varint(b, self.ty - ctx.previous_key, ctx.version)?;
-        } else {
-            vi64::write_varint(b, self.ty, ctx.version)?;
+    /// The value of a pair of type `ty`, read as its parity says.
+    pub(crate) fn decode_value<M: Mode>(ty: u64, r: &mut Reader<'_, M>, version: Version) -> Result<Self> {
+        if ty.is_multiple_of(2) {
+            return Ok(Self::Varint(VarintKey(ty), r.varint()?));
         }
-        match &self.value {
-            KeyValuePairValue::Varint(v) => { vi64::write_varint(b, *v, ctx.version)?; }
-            KeyValuePairValue::Bytes(v) => {
-                vi64::write_varint(b, v.len() as u64, ctx.version)?;
-                b.put_bytes(v)?;
+        let bytes = match version.limits_pair_values() {
+            true => BoundedBytes::<{ MAX_VALUE_LEN }>::decode(r)?.into_inner(),
+            false => r.length_prefixed_bytes()?.to_vec(),
+        };
+        Ok(Self::Bytes(BytesKey(ty), bytes))
+    }
+
+    pub(crate) fn encode_value(&self, w: &mut Writer, version: Version) -> Result<()> {
+        match self {
+            Self::Varint(_, v) => w.varint(*v)?,
+            Self::Bytes(_, bytes) if version.limits_pair_values() && bytes.len() > MAX_VALUE_LEN => {
+                return Err(Error::Unencodable("a key-value pair value over 2^16-1 bytes"));
             }
+            Self::Bytes(_, bytes) => w.length_prefixed_bytes(bytes)?,
+        }
+        Ok(())
+    }
+}
+
+/// Draft 7 to 10 parameters: every value is length-prefixed bytes, holding a varint for an even type.
+impl KeyValuePair {
+    /// `None` for an even type whose bytes aren't one varint, e.g. AUTHORIZATION_INFO (0x02) before draft 11.
+    pub(crate) fn decode_legacy<M: Mode>(r: &mut Reader<'_, M>) -> Result<Option<Self>> {
+        let ty = r.varint()?;
+        let value = r.length_prefixed_bytes()?;
+        if ty % 2 == 1 {
+            return Ok(Some(Self::Bytes(BytesKey(ty), value.to_vec())));
+        }
+        let mut value = Reader::frame_of(value, VarIntForm::Quic);
+        let varint = value.varint().ok().filter(|_| value.is_empty());
+        Ok(varint.map(|v| Self::Varint(VarintKey(ty), v)))
+    }
+
+    pub(crate) fn encode_legacy(&self, w: &mut Writer) -> Result<()> {
+        w.varint(self.ty())?;
+        match self {
+            Self::Varint(_, v) => w.with_varint_length(|w| w.varint(*v))?,
+            Self::Bytes(_, bytes) => w.length_prefixed_bytes(bytes)?,
         }
         Ok(())
     }

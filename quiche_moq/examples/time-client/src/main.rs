@@ -10,7 +10,7 @@ use quiche_moq_webtransport_helper::{MoqWebTransportHelper, State};
 
 struct ConnAppData {
     moq_helper: MoqWebTransportHelper,
-    subscribed: bool,
+    subscription: Option<quiche_moq::Subscription>,
 }
 
 type Endpoint = quiche_endpoint::Endpoint<ConnAppData, ()>;
@@ -43,7 +43,7 @@ fn main() {
         },
         ConnAppData {
             moq_helper: MoqWebTransportHelper::new_client("https://example.org".parse().unwrap(), moq::Config::default()),
-            subscribed: false,
+            subscription: None,
         },
         None,
         None,
@@ -75,35 +75,28 @@ fn post_handle_recvs(runner: &mut Runner) {
         } = &mut conn.app_data.moq_helper.state else {
             continue 'conn;
         };
-        if moq_session.initialized() && !conn.app_data.subscribed {
+        let (moq_session, mut t) = moq_session.core(wt_conn, h3_conn, quic_conn);
+        if moq_session.initialized() && conn.app_data.subscription.is_none() {
             info!("subscribe clock second");
-            moq_session.subscribe(
+            conn.app_data.subscription = Some(moq_session.subscribe(
                 &"clock--second".parse().unwrap(),
-                None,
-                None,
-                quiche_moq::wire::control_message::subscribe::FilterType::NextGroupStart,
-                wt_conn,
-                h3_conn,
-                quic_conn,
-            ).unwrap();
-            conn.app_data.subscribed = true;
+                quiche_moq::SubscribeOptions { filter: quiche_moq::LocationFilter::NextGroupStart, ..Default::default() },
+                &mut t).unwrap());
         }
         'trackLoop: for track_alias in &moq_session.readable() {
             loop {
-                let hdr = match moq_session.read_obj_hdr(*track_alias, wt_conn, h3_conn, quic_conn)
+                let (location, hdr) = match moq_session.recv_new_obj_hdr(*track_alias, &mut t)
                 {
-                    Ok(v) => v,
+                    Ok(moq::RecvObjHdr::Header { location, header, .. }) => (location, header),
+                    Ok(moq::RecvObjHdr::SubgroupFinished { .. } | moq::RecvObjHdr::SubgroupReset { .. } | moq::RecvObjHdr::Datagram { .. }) => continue,
                     Err(moq::Error::Done) => continue 'trackLoop,
                     Err(e) => unimplemented!("{:?}", e),
                 };
                 let mut buf = [0u8; 100];
-                let n = match moq_session.read_obj_pld(
-                    &mut buf,
+                let n = match moq_session.recv_obj_pld(
                     *track_alias,
-                    wt_conn,
-                    h3_conn,
-                    quic_conn,
-                ) {
+                    location,
+                    &mut buf, &mut t) {
                     Ok(v) => v,
                     Err(e) => unimplemented!("{:?}", e),
                 };

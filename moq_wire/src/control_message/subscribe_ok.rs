@@ -1,81 +1,69 @@
+use crate::prelude::*;
 use crate::bytes::{FromBytes, ToBytes};
-use crate::vi64;
-use crate::version;
-use crate::{
-    DEFAULT_PUBLISHER_GROUP_ORDER_EXTENSION_ID, EXPIRES_PARAMETER_ID, LARGEST_OBJECT_PARAMETER_ID, MAX_CACHE_DURATION_EXTENSION_ID,
-    Parameter, Parameters, RequestId, TrackAlias, Version,
-    MOQ_VERSION_DRAFT_07, MOQ_VERSION_DRAFT_11, MOQ_VERSION_DRAFT_12, MOQ_VERSION_DRAFT_15,
-    MOQ_VERSION_DRAFT_16, MOQ_VERSION_DRAFT_18, SUBSCRIBE_OK_MESSAGE_ID,
-};
-use octets::{Octets, OctetsMut};
 use crate::control_message::ControlMessage;
-use crate::control_message::subscribe::SubscribeMessage;
-use crate::error::Error;
+use crate::error::{Error, Result};
 use crate::location::Location;
+use crate::message_parameters::{params_as_properties, properties_as_params, MessageParams, Param};
+use crate::property::{DEFAULT_PUBLISHER_GROUP_ORDER, MAX_CACHE_DURATION};
+use crate::{Frame, GroupOrder, KeyValuePair, KeyValuePairs, Reader, RequestId, TrackAlias, Version, Writer, SUBSCRIBE_OK_MESSAGE_ID};
 
+/// SUBSCRIBE_OK (draft-ietf-moq-transport-19 §10.7).
 #[derive(Debug, Eq, PartialEq)]
 pub struct SubscribeOkMessage {
+    /// 0 from draft 17, where the request's stream names it
     pub(crate) request_id: RequestId,
-    /// `None` for draft 07 to draft 11
-    track_alias: Option<TrackAlias>,
-    parameters: SubscribeOkParameters,
-}
-
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum GroupOrder {
-    Ascending,
-    Descending,
-}
-
-#[derive(Debug, Eq, PartialEq)]
-struct SubscribeOkParameters {
+    /// Drafts 7 to 11 don't repeat the subscriber's from SUBSCRIBE: 0 there until resolved
+    track_alias: TrackAlias,
+    /// EXPIRES in milliseconds, 0 for never
     expires: u64,
-    group_order: GroupOrder,
     largest_location: Option<Location>,
-    max_cache_duration: Option<u64>,
-    extra_parameters: Parameters,
+    track_properties: KeyValuePairs,
 }
 
 impl SubscribeOkMessage {
-    pub fn from(sm: &SubscribeMessage, track_alias: Option<TrackAlias>, largest_location: Option<Location>, max_cache_duration: Option<u64>) -> Self {
-        assert!(track_alias.is_none() ^ sm.track_alias.is_none());
-        Self {
-            request_id: sm.request_id,
-            track_alias,
-            parameters: SubscribeOkParameters {
-                expires: 0,
-                group_order: GroupOrder::Ascending,
-                largest_location,
-                max_cache_duration,
-                extra_parameters: Parameters(vec![]),
-            },
-        }
+    /// Accepting `request_id` as `track_alias`, the subscriber's from SUBSCRIBE until draft 11, the publisher's after.
+    pub fn new(request_id: RequestId, track_alias: TrackAlias, largest_location: Option<Location>, max_cache_duration: Option<u64>) -> Self {
+        let track_properties = max_cache_duration.map(|ms| KeyValuePair::Varint(MAX_CACHE_DURATION, ms)).into_iter().collect();
+        Self { request_id, track_alias, expires: 0, largest_location, track_properties }
     }
 
-    pub fn request_id(&self) -> u64 {
+    pub fn request_id(&self) -> RequestId {
         self.request_id
     }
 
-    /// `None` for draft 7 to draft 11
-    pub fn track_alias(&self) -> Option<u64> {
+    pub fn with_track_properties(self, track_properties: KeyValuePairs) -> Self {
+        Self { track_properties, ..self }
+    }
+
+    pub fn track_alias(&self) -> TrackAlias {
         self.track_alias
     }
 
-    pub fn expires(&self) -> u64 {
-        self.parameters.expires
+    /// Names the subscriber's alias, which drafts 7 to 11 leave out.
+    pub fn set_track_alias(&mut self, track_alias: TrackAlias) {
+        self.track_alias = track_alias;
     }
 
-    pub fn group_order(&self) -> GroupOrder {
-        self.parameters.group_order
+    pub fn expires(&self) -> u64 {
+        self.expires
     }
 
     pub fn largest_location(&self) -> Option<Location> {
-        self.parameters.largest_location
+        self.largest_location
     }
 
-    /// Returns the MAX_CACHE_DURATION in milliseconds, if present.
+    pub fn track_properties(&self) -> &KeyValuePairs {
+        &self.track_properties
+    }
+
+    /// The publisher's order, DEFAULT_PUBLISHER_GROUP_ORDER.
+    pub fn group_order(&self) -> Option<GroupOrder> {
+        GroupOrder::try_from(self.track_properties.get_varint(DEFAULT_PUBLISHER_GROUP_ORDER)?).ok()
+    }
+
+    /// MAX_CACHE_DURATION in milliseconds.
     pub fn max_cache_duration(&self) -> Option<u64> {
-        self.parameters.max_cache_duration
+        self.track_properties.get_varint(MAX_CACHE_DURATION)
     }
 }
 
@@ -84,137 +72,124 @@ impl ControlMessage for SubscribeOkMessage {
 
     fn qlog_type_name(&self) -> &'static str { "subscribe_ok" }
 
-    fn to_body_bytes(&self, b: &mut OctetsMut, version: Version) -> crate::error::Result<()> {
-        if !version::stream_per_request(version) {
-            vi64::write_varint(b, self.request_id, version)?;
+    fn to_body_bytes(&self, b: &mut Writer, version: Version) -> Result<()> {
+        if !version.stream_per_request() {
+            b.varint(self.request_id.0)?;
         }
-        match version {
-            MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_11 => {}
-            MOQ_VERSION_DRAFT_12..=MOQ_VERSION_DRAFT_18 => {
-                vi64::write_varint(b, self.track_alias.unwrap(), version)?;
+        if version.draft() >= 12 {
+            b.varint(self.track_alias.0)?;
+        }
+        let mut params = MessageParams::new();
+        if version.draft() <= 14 {
+            // Expires, Group Order, Content Exists and Largest Location as fields
+            b.varint(self.expires)?;
+            b.u8(self.group_order().unwrap_or(GroupOrder::Ascending) as u8);
+            match &self.largest_location {
+                Some(location) => {
+                    b.u8(1);
+                    location.to_bytes(b, version)?;
+                }
+                None => b.u8(0),
             }
-            _ => unimplemented!()
-        }
-        self.parameters.to_bytes(b, version)
-    }
-
-    fn from_body_bytes(b: &mut Octets, version: Version) -> crate::error::Result<Self> {
-        let request_id = if version::stream_per_request(version) {
-            0 // no Request ID on the wire; correlated by stream
         } else {
-            vi64::read_varint(b, version)?
+            if self.expires != 0 {
+                params.put_varint(Param::Expires, self.expires);
+            }
+            if let Some(location) = self.largest_location {
+                params.put_location(Param::LargestObject, location);
+            }
+        }
+        if version.draft() <= 15 {
+            properties_as_params(&self.track_properties, &mut params, version);
+        }
+        params.to_bytes(b, version)?;
+        // Track Extensions in draft 16, Track Properties after
+        if version.draft() >= 16 {
+            self.track_properties.encode_uncounted(b, version)?;
+        }
+        Ok(())
+    }
+
+    fn from_body_bytes(b: &mut Reader<'_, Frame>, version: Version) -> Result<Self> {
+        let request_id = match version.stream_per_request() {
+            true => RequestId(0),
+            false => RequestId(b.varint()?),
         };
-        let track_alias = match version {
-            MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_11 => None,
-            MOQ_VERSION_DRAFT_12..=MOQ_VERSION_DRAFT_18 => Some(vi64::read_varint(b, version)?),
-            _ => unimplemented!()
+        let track_alias = TrackAlias(if version.draft() >= 12 { b.varint()? } else { 0 });
+        let mut track_properties = KeyValuePairs::new();
+        let (expires, largest_location, mut params) = if version.draft() <= 14 {
+            let expires = b.varint()?;
+            let order = GroupOrder::try_from(u64::from(b.u8()?))?;
+            track_properties.insert(KeyValuePair::Varint(DEFAULT_PUBLISHER_GROUP_ORDER, order.into()));
+            let largest_location = match b.u8()? {
+                0 => None,
+                1 => Some(Location::from_bytes(b, version)?),
+                other => return Err(Error::ProtocolViolation(format!("Content Exists {other}"))),
+            };
+            (expires, largest_location, MessageParams::from_bytes(b, version)?)
+        } else {
+            let mut params = MessageParams::from_bytes(b, version)?;
+            (params.take_varint(Param::Expires).unwrap_or(0), params.take_location(Param::LargestObject), params)
         };
-        let parameters = SubscribeOkParameters::from_bytes(b, version)?;
-        Ok(Self { request_id, track_alias, parameters })
+        if version.draft() <= 15 {
+            params_as_properties(&mut params, &mut track_properties, version)?;
+        }
+        params.finish(version)?;
+        if version.draft() >= 16 {
+            track_properties = KeyValuePairs::decode_to_end(b, version)?;
+        }
+        Ok(Self { request_id, track_alias, expires, largest_location, track_properties })
     }
 }
 
-impl FromBytes for SubscribeOkParameters {
-    fn from_bytes(b: &mut Octets, version: Version) -> crate::Result<Self> {
-        match version {
-            // Drafts 07–15: inline fields followed by a trailing Parameters section.
-            MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_15 => {
-                let expires = vi64::read_varint(b, version)?;
-                let group_order_byte = b.get_u8()?;
-                if group_order_byte != 0x1 && group_order_byte != 0x2 {
-                    return Err(Error::ProtocolViolation("invalid group order".into()));
-                }
-                let content_exists = b.get_u8()?;
-                let largest_location = if content_exists == 1 {
-                    Some(Location::from_bytes(b, version)?)
-                } else {
-                    None
-                };
-                let all_params = Parameters::from_bytes(b, version)?;
-                let max_cache_duration = all_params.get_varint(MAX_CACHE_DURATION_EXTENSION_ID);
-                let extra_parameters = Parameters(all_params.0.into_iter()
-                    .filter(|p| p.ty != MAX_CACHE_DURATION_EXTENSION_ID)
-                    .collect());
-                Ok(Self {
-                    expires,
-                    group_order: if group_order_byte == 2 { GroupOrder::Descending } else { GroupOrder::Ascending },
-                    largest_location,
-                    max_cache_duration,
-                    extra_parameters,
-                })
-            }
-            // Draft 16+: single count-prefixed Parameters section containing all KVPs.
-            MOQ_VERSION_DRAFT_16..=MOQ_VERSION_DRAFT_18 => {
-                let params = Parameters::from_bytes(b, version)?;
-                let expires = params.get_varint(EXPIRES_PARAMETER_ID).unwrap_or(0);
-                let largest_location = params.get_bytes(LARGEST_OBJECT_PARAMETER_ID).and_then(|bytes| {
-                    Location::from_bytes(&mut Octets::with_slice(bytes), version).ok()
-                });
-                let group_order_val = params.get_varint(DEFAULT_PUBLISHER_GROUP_ORDER_EXTENSION_ID).unwrap_or(1);
-                let group_order = if group_order_val == 2 { GroupOrder::Descending } else { GroupOrder::Ascending };
-                let max_cache_duration = params.get_varint(MAX_CACHE_DURATION_EXTENSION_ID);
-                let known = [EXPIRES_PARAMETER_ID, LARGEST_OBJECT_PARAMETER_ID, DEFAULT_PUBLISHER_GROUP_ORDER_EXTENSION_ID, MAX_CACHE_DURATION_EXTENSION_ID];
-                let extra_parameters = Parameters(params.0.into_iter().filter(|p| !known.contains(&p.ty)).collect());
-                Ok(Self { expires, group_order, largest_location, max_cache_duration, extra_parameters })
-            }
-            _ => unimplemented!()
-        }
-    }
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bytes::{from_slice, to_vec};
+    use crate::{MOQ_VERSION_DRAFT_14, MOQ_VERSION_DRAFT_15, MOQ_VERSION_DRAFT_16, MOQ_VERSION_DRAFT_17, MOQ_VERSION_DRAFT_18};
+    use rstest::rstest;
 
-impl ToBytes for SubscribeOkParameters {
-    fn to_bytes(&self, b: &mut OctetsMut, version: Version) -> crate::Result<()> {
-        match version {
-            // Drafts 07–15: inline fields followed by a trailing Parameters section.
-            MOQ_VERSION_DRAFT_07..=MOQ_VERSION_DRAFT_15 => {
-                vi64::write_varint(b, self.expires, version)?;
-                b.put_u8(match self.group_order {
-                    GroupOrder::Ascending => 1,
-                    GroupOrder::Descending => 2,
-                })?;
-                if let Some(loc) = &self.largest_location {
-                    let mut loc_buf = [0u8; 18];
-                    let mut loc_o = OctetsMut::with_slice(&mut loc_buf);
-                    loc.to_bytes(&mut loc_o, version)?;
-                    let loc_len = loc_o.off();
-                    b.put_u8(1)?;
-                    b.put_bytes(&loc_buf[..loc_len])?;
-                } else {
-                    b.put_u8(0)?;
-                }
-                let mut params_vec = vec![];
-                if let Some(ms) = self.max_cache_duration {
-                    params_vec.push(Parameter::new_varint(MAX_CACHE_DURATION_EXTENSION_ID, ms));
-                }
-                params_vec.extend(self.extra_parameters.0.iter().cloned());
-                Parameters(params_vec).to_bytes(b, version)
-            }
-            // Draft 16+: single count-prefixed Parameters section with all KVPs.
-            // Parameters::to_bytes handles sorting by type ID for delta-encoding.
-            MOQ_VERSION_DRAFT_16..=MOQ_VERSION_DRAFT_18 => {
-                let group_order_val: u64 = match self.group_order {
-                    GroupOrder::Ascending => 1,
-                    GroupOrder::Descending => 2,
-                };
-                let mut params_vec = vec![];
-                if let Some(ms) = self.max_cache_duration {
-                    params_vec.push(Parameter::new_varint(MAX_CACHE_DURATION_EXTENSION_ID, ms));
-                }
-                if self.expires != 0 {
-                    params_vec.push(Parameter::new_varint(EXPIRES_PARAMETER_ID, self.expires));
-                }
-                if let Some(loc) = &self.largest_location {
-                    let mut loc_buf = [0u8; 18];
-                    let mut loc_o = OctetsMut::with_slice(&mut loc_buf);
-                    loc.to_bytes(&mut loc_o, version)?;
-                    let loc_len = loc_o.off();
-                    params_vec.push(Parameter::new_bytes(LARGEST_OBJECT_PARAMETER_ID, loc_buf[..loc_len].to_vec()));
-                }
-                params_vec.push(Parameter::new_varint(DEFAULT_PUBLISHER_GROUP_ORDER_EXTENSION_ID, group_order_val));
-                params_vec.extend(self.extra_parameters.0.iter().cloned());
-                Parameters(params_vec).to_bytes(b, version)
-            }
-            _ => unimplemented!()
-        }
+    fn subscribe_ok() -> SubscribeOkMessage {
+        let track_properties = [KeyValuePair::Varint(MAX_CACHE_DURATION, 5), KeyValuePair::Varint(DEFAULT_PUBLISHER_GROUP_ORDER, 2)].into_iter().collect();
+        SubscribeOkMessage { request_id: RequestId(4), track_alias: TrackAlias(1), expires: 0, largest_location: Some(Location { group: 1, object: 2 }), track_properties }
+    }
+
+    #[rstest]
+    #[case(MOQ_VERSION_DRAFT_14)]
+    #[case(MOQ_VERSION_DRAFT_15)]
+    #[case(MOQ_VERSION_DRAFT_16)]
+    fn round_trips(#[case] version: Version) {
+        assert_eq!(from_slice::<SubscribeOkMessage>(&to_vec(&subscribe_ok(), version).unwrap(), version).unwrap(), subscribe_ok());
+    }
+
+    #[rstest]
+    #[case(MOQ_VERSION_DRAFT_17)]
+    #[case(MOQ_VERSION_DRAFT_18)]
+    fn round_trips_without_request_id(#[case] version: Version) {
+        let decoded: SubscribeOkMessage = from_slice(&to_vec(&subscribe_ok(), version).unwrap(), version).unwrap();
+        assert_eq!(decoded, SubscribeOkMessage { request_id: RequestId(0), ..subscribe_ok() });
+    }
+
+    /// draft-ietf-moq-transport-16 §9.8: parameters, then the Track Extensions to the end.
+    #[test]
+    fn draft_16_track_extensions_follow_the_parameters() {
+        let bytes = to_vec(&subscribe_ok(), MOQ_VERSION_DRAFT_16).unwrap();
+        // type, length, request id, alias, 1 parameter: LARGEST_OBJECT (1, 2) | MAX_CACHE_DURATION 0x04 5, DEFAULT_PUBLISHER_GROUP_ORDER 0x22 - 0x04 2
+        assert_eq!(bytes, [0x04, 0, 11, 4, 1, 1, 0x09, 2, 1, 2, 0x04, 5, 0x1E, 2]);
+    }
+
+    /// draft-ietf-moq-transport-15 §9.8: no fields but Request ID and Track Alias.
+    #[test]
+    fn draft_15_has_only_parameters() {
+        let bytes = to_vec(&subscribe_ok(), MOQ_VERSION_DRAFT_15).unwrap();
+        // type, length, request id, alias, 3 parameters: MAX_CACHE_DURATION 0x04 5, LARGEST_OBJECT 0x09 - 0x04 (1, 2), GROUP_ORDER 0x22 - 0x09 2
+        assert_eq!(bytes, [0x04, 0, 11, 4, 1, 3, 0x04, 5, 0x05, 2, 1, 2, 0x19, 2]);
+    }
+
+    #[test]
+    fn content_exists_over_1_is_protocol_violation() {
+        // request id, alias, expires, group order, content exists 2
+        let bytes = [0x04, 0, 5, 4, 1, 0, 1, 2];
+        assert!(matches!(from_slice::<SubscribeOkMessage>(&bytes, MOQ_VERSION_DRAFT_14), Err(Error::ProtocolViolation(_))));
     }
 }

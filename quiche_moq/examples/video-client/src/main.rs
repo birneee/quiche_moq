@@ -12,7 +12,13 @@ use quiche_moq_webtransport_helper::{MoqWebTransportHelper, State};
 
 struct ConnAppData {
     moq_helper: MoqWebTransportHelper,
-    subscribed: bool,
+    subscription: Option<quiche_moq::Subscription>,
+    /// The object currently being read (from `recv_new_obj_hdr`) and how
+    /// many payload bytes are still owed for it — `recv_obj_pld` needs the
+    /// `Location` on every call now that a track can have several objects
+    /// in flight at once, so this example (which only ever reads one at a
+    /// time) tracks it itself.
+    current: Option<(moq::wire::Location, usize)>,
 }
 
 struct AppData {
@@ -51,7 +57,8 @@ fn main() {
         },
         ConnAppData {
             moq_helper: MoqWebTransportHelper::new_client("https://example.org".parse().unwrap(), moq::Config::default()),
-            subscribed: false,
+            subscription: None,
+            current: None,
         },
         None,
         None,
@@ -84,41 +91,36 @@ fn post_handle_recvs(runner: &mut Runner) {
         } = &mut conn.app_data.moq_helper.state else {
             continue 'conn;
         };
-        if moq_session.initialized() && !conn.app_data.subscribed {
+        let (moq_session, mut t) = moq_session.core(wt_conn, h3_conn, quic_conn);
+        if moq_session.initialized() && conn.app_data.subscription.is_none() {
             info!("subscribe clock second");
-            moq_session.subscribe(
+            conn.app_data.subscription = Some(moq_session.subscribe(
                 &"testsrc--mp4".parse().unwrap(),
-                None,
-                None,
-                quiche_moq::wire::control_message::subscribe::FilterType::NextGroupStart,
-                wt_conn,
-                h3_conn,
-                quic_conn,
-            ).unwrap();
-            conn.app_data.subscribed = true;
+                quiche_moq::SubscribeOptions { filter: quiche_moq::LocationFilter::NextGroupStart, ..Default::default() },
+                &mut t).unwrap());
         }
         'trackLoop: for track_alias in moq_session.readable() {
             loop {
-                let rop = moq_session.remaining_object_payload(track_alias).unwrap();
-                if rop == 0 {
-                    match moq_session.read_obj_hdr(track_alias, wt_conn, h3_conn, quic_conn) {
-                        Ok(_) => {}
+                let (location, remaining) = match conn.app_data.current {
+                    Some(v) => v,
+                    None => match moq_session.recv_new_obj_hdr(track_alias, &mut t) {
+                        Ok(quiche_moq::RecvObjHdr::Header { location, header, .. }) => (location, header.payload_len()),
+                        Ok(quiche_moq::RecvObjHdr::SubgroupFinished { .. } | quiche_moq::RecvObjHdr::SubgroupReset { .. } | quiche_moq::RecvObjHdr::Datagram { .. }) => continue,
                         Err(quiche_moq::Error::Fin) => continue 'trackLoop,
                         Err(quiche_moq::Error::Done) => continue 'trackLoop,
                         Err(e) => unimplemented!("{:?}", e),
-                    };
-                }
+                    },
+                };
                 let mut buf = [0u8; 1000];
-                let n = match moq_session.read_obj_pld(
-                    &mut buf,
+                let want = remaining.min(buf.len());
+                let n = match moq_session.recv_obj_pld(
                     track_alias,
-                    wt_conn,
-                    h3_conn,
-                    quic_conn,
-                ) {
+                    location,
+                    &mut buf[..want], &mut t) {
                     Ok(n) => n,
                     Err(e) => unimplemented!("{:?}", e),
                 };
+                conn.app_data.current = if remaining - n > 0 { Some((location, remaining - n)) } else { None };
                 app_data.out.write_all(&buf[..n]).unwrap();
             }
         }

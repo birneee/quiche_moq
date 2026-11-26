@@ -1,7 +1,6 @@
 use std::collections::VecDeque;
-use web_time::Instant;
-use moq_wire::{KeyValuePairs, Location};
-use crate::{ObjectCache, object_ref::{CachedObjectMutRef, CachedObjectRef, ObjectMeta}};
+use moq_wire::Location;
+use crate::{BeginError, NewObject, ObjectCache, object_cache::Generation, object_ref::{CachedObjectMutRef, CachedObjectRef, ObjectMeta}};
 
 pub struct Level {
     data: Box<[u8]>,
@@ -63,6 +62,8 @@ struct Entry {
 pub struct LevelSlotObjectCache {
     levels: Vec<Level>,
     objects: VecDeque<Entry>,
+    /// Bumped on every successful `begin()` or `restart()` — see `ObjectCache::generation`.
+    generation: Generation,
 }
 
 impl LevelSlotObjectCache {
@@ -73,7 +74,7 @@ impl LevelSlotObjectCache {
             "levels must be strictly ascending by slot size"
         );
         let total_capacity = levels.iter().map(|l| l.num_slots).sum();
-        Self { levels, objects: VecDeque::with_capacity(total_capacity)}
+        Self { levels, objects: VecDeque::with_capacity(total_capacity), generation: Generation::default() }
     }
 
     fn level_for_payload(&self, payload_len: usize) -> Option<usize> {
@@ -82,32 +83,32 @@ impl LevelSlotObjectCache {
 }
 
 impl ObjectCache for LevelSlotObjectCache {
-    fn begin(&mut self, location: Location, ext_hdrs: KeyValuePairs, payload_len: usize) -> Result<(), ()> {
+    fn begin(&mut self, object: NewObject) -> Result<Vec<Location>, BeginError> {
+        let (location, payload_len) = (object.location, object.payload_len);
         // Streams race independently and can be delivered out of order (e.g. after a network
         // stall/migration). Reject anything that doesn't advance past what's already cached
         // instead of caching a stale straggler after newer data has already gone out.
         if self.objects.back().is_some_and(|e| location <= e.meta.location) {
-            return Err(());
+            return Err(BeginError::Stale);
         }
-        let idx = self.level_for_payload(payload_len).ok_or(())?;
+        let idx = self.level_for_payload(payload_len).ok_or(BeginError::TooLarge)?;
 
-        if self.levels[idx].is_full() {
-            match self.objects.front() {
-                Some(front) if front.level == idx => {
-                    self.levels[idx].reclaim();
-                    self.objects.pop_front();
-                }
-                _ => return Err(()),
-            }
+        // oldest first, also of other levels, until this level has a free slot
+        let mut evicted = Vec::new();
+        while self.levels[idx].is_full() {
+            let oldest = self.objects.pop_front().expect("a full level holds objects");
+            self.levels[oldest.level].reclaim();
+            evicted.push(oldest.meta.location);
         }
 
-        let slot_index = self.levels[idx].alloc().ok_or(())?;
+        let slot_index = self.levels[idx].alloc().expect("evicted until the level has room");
         self.objects.push_back(Entry {
-            meta: ObjectMeta { location, ext_hdrs, payload_len, write_pos: 0, received_at: Instant::now() },
+            meta: ObjectMeta::new(object),
             level: idx,
             slot_index,
         });
-        Ok(())
+        self.generation.bump();
+        Ok(evicted)
     }
 
     fn is_empty(&self) -> bool {
@@ -135,6 +136,12 @@ impl ObjectCache for LevelSlotObjectCache {
             })
     }
 
+    fn find_mut(&mut self, loc: Location) -> Option<CachedObjectMutRef<'_>> {
+        let e = self.objects.iter_mut().find(|e| e.meta.location == loc)?;
+        let data = self.levels[e.level].slot_data_mut(e.slot_index);
+        Some(CachedObjectMutRef { meta: &mut e.meta, data })
+    }
+
     fn next_after(&self, loc: Option<Location>) -> Option<CachedObjectRef<'_>> {
         let e = match loc {
             None    => self.objects.front(),
@@ -145,6 +152,16 @@ impl ObjectCache for LevelSlotObjectCache {
             data: self.levels[e.level].slot_data(e.slot_index),
         })
     }
+
+    fn generation(&self) -> u64 {
+        self.generation.get()
+    }
+
+    fn restart(&mut self, loc: Location) {
+        let Some(mut obj) = self.find_mut(loc) else { return };
+        obj.restart();
+        self.generation.bump();
+    }
 }
 
 #[cfg(test)]
@@ -152,10 +169,9 @@ mod tests {
     use super::*;
 
     fn loc(group: u64, object: u64) -> Location { Location { group, object } }
-    fn kv() -> KeyValuePairs { KeyValuePairs::new() }
 
     fn write(cache: &mut dyn ObjectCache, loc: Location, payload_len: usize) {
-        cache.begin(loc, kv(), payload_len).unwrap();
+        cache.begin(NewObject::new(loc, payload_len)).unwrap();
         if let Some(mut obj) = cache.latest_mut() {
             let buf = obj.unfilled();
             buf.fill(0xAB);
@@ -167,8 +183,8 @@ mod tests {
     #[test]
     fn routes_by_size() {
         let mut cache = LevelSlotObjectCache::new(vec![Level::new(8, 4), Level::new(64, 4)]);
-        cache.begin(loc(0, 0), kv(), 4).unwrap();
-        cache.begin(loc(0, 1), kv(), 32).unwrap();
+        cache.begin(NewObject::new(loc(0, 0), 4)).unwrap();
+        cache.begin(NewObject::new(loc(0, 1), 32)).unwrap();
         assert!(cache.find(loc(0, 0)).is_some());
         assert!(cache.find(loc(0, 1)).is_some());
     }
@@ -176,7 +192,7 @@ mod tests {
     #[test]
     fn rejects_oversized_object() {
         let mut cache = LevelSlotObjectCache::new(vec![Level::new(8, 4), Level::new(64, 4)]);
-        assert!(cache.begin(loc(0, 0), kv(), 65).is_err());
+        assert!(cache.begin(NewObject::new(loc(0, 0), 65)).is_err());
     }
 
     #[test]
@@ -194,15 +210,16 @@ mod tests {
         assert!(cache.find(loc(0, 4)).is_some());
     }
 
+    /// Large level full but the front object is small: older objects are
+    /// evicted until a large slot frees, instead of the level jamming.
     #[test]
-    fn fails_when_front_is_different_level() {
-        // Large level full, but front object is small — fail without evicting.
+    fn evicts_older_levels_until_slot_frees() {
         let mut cache = LevelSlotObjectCache::new(vec![Level::new(8, 2), Level::new(32, 1)]);
         write(&mut cache, loc(0, 0), 4);  // small (front)
         write(&mut cache, loc(0, 1), 4);
         write(&mut cache, loc(0, 2), 32); // large level full
-        assert!(cache.begin(loc(0, 3), kv(), 32).is_err()); // front is small, not large → fail
-        assert!(cache.find(loc(0, 0)).is_some()); // nothing was evicted
+        assert_eq!(cache.begin(NewObject::new(loc(0, 3), 32)), Ok(vec![loc(0, 0), loc(0, 1), loc(0, 2)]));
+        assert!(cache.find(loc(0, 3)).is_some());
     }
 
     #[test]
@@ -220,7 +237,7 @@ mod tests {
     #[test]
     fn err_when_oversized_for_all_levels() {
         let mut cache = LevelSlotObjectCache::new(vec![Level::new(8, 2), Level::new(32, 1)]);
-        assert!(cache.begin(loc(0, 0), kv(), 33).is_err());
+        assert!(cache.begin(NewObject::new(loc(0, 0), 33)).is_err());
     }
 
     #[test]

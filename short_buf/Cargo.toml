@@ -2,5 +2,9 @@
 name = "short_buf"
 version = "0.1.0"
 edition = "2024"
+license.workspace = true
+description = "A short fixed-capacity buffer queue without allocation"
+readme = "README.md"
+repository.workspace = true
 
 [dependencies]

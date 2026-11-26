@@ -60,6 +60,12 @@ pub struct FMp4Demuxer {
     pending_samples: VecDeque<Sample>,
 }
 
+impl Default for FMp4Demuxer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FMp4Demuxer {
     pub fn new() -> Self {
         Self {
@@ -218,11 +224,10 @@ impl FMp4Demuxer {
     fn parse_moof(&mut self, data: &[u8]) {
         self.pending_moof.clear();
         iter_boxes(data, |btype, bdata| {
-            if btype == b"traf" {
-                if let Some(frag) = self.parse_traf(bdata) {
+            if btype == b"traf"
+                && let Some(frag) = self.parse_traf(bdata) {
                     self.pending_moof.push(frag);
                 }
-            }
         });
     }
 

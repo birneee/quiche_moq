@@ -1,12 +1,10 @@
-use crate::bytes::{FromBytes, ToBytes};
-use crate::vi64;
-use crate::version;
+use crate::bytes::FromBytes;
 use crate::Version;
-use octets::{Octets, OctetsMut};
+use crate::{Mode, Reader};
 
 pub(crate) struct ControlMessageHeader {
     ty: u64,
-    len: usize,
+    len: u64,
 }
 
 impl ControlMessageHeader {
@@ -14,34 +12,22 @@ impl ControlMessageHeader {
         self.ty
     }
 
-    pub(crate) fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> u64 {
         self.len
     }
 }
 
 impl FromBytes for ControlMessageHeader {
-    fn from_bytes(b: &mut Octets, version: Version) -> crate::error::Result<Self> {
-        let ty = vi64::read_varint(b, version)?;
-        let len = if version::message_length_is_fixed_u16(version) {
-            b.get_u16()? as usize
+    fn from_bytes<M: Mode>(b: &mut Reader<'_, M>, version: Version) -> crate::error::Result<Self> {
+        let ty = b.varint()?;
+        let len = if version.message_length_is_fixed_u16() {
+            u64::from(b.u16()?)
         } else {
-            vi64::read_varint(b, version)? as usize
+            b.varint()?
         };
         Ok(Self{
             ty,
             len
         })
-    }
-}
-
-impl ToBytes for ControlMessageHeader {
-    fn to_bytes(&self, b: &mut OctetsMut, version: Version) -> crate::error::Result<()> {
-        vi64::write_varint(b, self.ty, version)?;
-        if version::message_length_is_fixed_u16(version) {
-            b.put_u16(self.len as u16)?;
-        } else {
-            vi64::write_varint(b, self.len as u64, version)?;
-        }
-        Ok(())
     }
 }
