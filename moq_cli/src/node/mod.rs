@@ -10,7 +10,7 @@ use mio::Interest;
 use url::Url;
 
 use moq_object_cache::{begin_or_join, fold, put_datagram, JoinError, NewObject, ObjectCache, PackedObjectCache};
-use quiche_endpoint_utils::SignalSource;
+use signal_hook_mio::v1_0::Signals;
 use quiche_mio_runner as runner;
 use quiche_mio_runner::quiche_endpoint::{
     ClientId, ConnMap, Endpoint, EndpointConfig, ServerConfig, make_qlog_writer, quiche,
@@ -167,11 +167,11 @@ struct AppData {
     // every connection that actually announced them (see
     // `ConnAppData::announced_namespaces`) when the `Unpub` action fires.
     unpub_namespaces: Vec<Namespace>,
-    // Owns the SIGUSR1/SIGUSR2 signalfds so on_file_event can drain them when
+    // Owns the SIGUSR1/SIGUSR2 sources so on_file_event can drain them when
     // USR1_EVENT/USR2_EVENT fires. Registered via the non-owning
     // `register_external` (see run()); kept alive here instead.
-    sigusr1_source: Option<SignalSource>,
-    sigusr2_source: Option<SignalSource>,
+    sigusr1_source: Option<Signals>,
+    sigusr2_source: Option<Signals>,
     // From --timestamp. on_file_event (where line-delimited samples are
     // pushed) is a non-capturing `fn` too, so it's read from here.
     embed_timestamps: bool,

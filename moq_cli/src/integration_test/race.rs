@@ -2,6 +2,12 @@
 
 use super::*;
 
+/// A `--sub#race` entry: subscribes via one candidate at a time, probing the
+/// rest and switching leaders as they pull ahead.
+fn sub_arg_race(track: &NamespaceTrackname) -> SubArg {
+    SubArg { race: true, ..sub_arg(track) }
+}
+
 /// `#race` promotion is trigger-only (`SigAction::RaceProbe`,
 /// `crate::race::trigger_race`), no background polling.
 /// - trigger flips every non-leader candidate to Forward=1, `AbsoluteStart`
@@ -18,6 +24,7 @@ fn relay_race_switches_to_the_candidate_that_actually_has_content() {
 /// - `Keep`: forwarding must move to the standby
 /// - `Switch`: the standby must keep the track
 fn race_mode_delivers_from_caught_up_standby(mode: RaceMode) {
+    let _signals = signal_lock();
     let port_a = free_udp_port();
     let port_b = free_udp_port();
     let relay_port = free_udp_port();
@@ -62,7 +69,7 @@ fn race_mode_delivers_from_caught_up_standby(mode: RaceMode) {
 
     write_and_close(pub_w_b, all_lines);
     std::thread::sleep(Duration::from_millis(150)); // let pub_b actually cache the content
-    signal_node_thread(&relay_thread, libc::SIGUSR1);
+    raise(libc::SIGUSR1);
 
     let output = wait_for_file_len(&out_path, all_lines.len(), Duration::from_secs(10));
 
@@ -98,6 +105,7 @@ fn relay_race_switch_keeps_caught_up_standby() {
 ///   both must show up after, not just content published post-promotion
 #[test]
 fn relay_race_promotion_backfills_gap_from_winner_cache() {
+    let _signals = signal_lock();
     let port_a = free_udp_port();
     let port_b = free_udp_port();
     let relay_port = free_udp_port();
@@ -153,7 +161,7 @@ fn relay_race_promotion_backfills_gap_from_winner_cache() {
     // subscription.
     write_and_close(pub_w_b, b"l1\nl2\n");
     std::thread::sleep(Duration::from_millis(150)); // let pub_b actually cache them
-    signal_node_thread(&relay_thread, libc::SIGUSR1);
+    raise(libc::SIGUSR1);
 
     let output = wait_for_file_len(&out_path, b"l0\nl1\nl2\n".len(), Duration::from_secs(10));
 
@@ -239,6 +247,7 @@ fn relay_race_standby_replaces_lost_leader() {
 
 #[test]
 fn relay_race_survives_candidate_disconnect() {
+    let _signals = signal_lock();
     let port_a = free_udp_port();
     let port_b = free_udp_port();
     let port_c = free_udp_port();
@@ -296,7 +305,7 @@ fn relay_race_survives_candidate_disconnect() {
 
     write_and_close(pub_w_c, all_lines);
     std::thread::sleep(Duration::from_millis(150)); // let pub_c actually cache the content
-    signal_node_thread(&relay_thread, libc::SIGUSR1);
+    raise(libc::SIGUSR1);
 
     let output = wait_for_file_len(&out_path, all_lines.len(), Duration::from_secs(10));
 
@@ -318,6 +327,7 @@ fn relay_race_survives_candidate_disconnect() {
 /// - `pub_c`: publishes, its content must arrive
 #[test]
 fn relay_race_promotes_the_one_candidate_with_content_among_several() {
+    let _signals = signal_lock();
     let port_a = free_udp_port();
     let port_b = free_udp_port();
     let port_c = free_udp_port();
@@ -371,7 +381,7 @@ fn relay_race_promotes_the_one_candidate_with_content_among_several() {
 
     write_and_close(pub_w_c, all_lines);
     std::thread::sleep(Duration::from_millis(150)); // let pub_c actually cache it
-    signal_node_thread(&relay_thread, libc::SIGUSR1);
+    raise(libc::SIGUSR1);
 
     let output = wait_for_file_len(&out_path, all_lines.len(), Duration::from_secs(10));
 

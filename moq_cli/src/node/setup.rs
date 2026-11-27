@@ -63,7 +63,7 @@ pub(super) fn setup_from_args(args: &Args) -> ArgSetup {
         let path = ia.file.as_deref().unwrap_or(std::path::Path::new("-"));
         let file = open_input(path);
         let fd = file.as_raw_fd();
-        if is_epoll_compatible(&file) { file_input_fds.push(fd); }
+        if is_pollable(&file, Interest::READABLE) { file_input_fds.push(fd); }
         file_inputs.push(FileInputState::new(file, ia.track.clone(), ia.delimiter));
     }
 
@@ -87,7 +87,7 @@ pub(super) fn setup_from_args(args: &Args) -> ArgSetup {
         let path = oa.file.as_deref().unwrap_or(std::path::Path::new("-"));
         let file = open_output(path);
         let fd = file.as_raw_fd();
-        if is_epoll_compatible(&file) { file_output_fds.push(fd); }
+        if is_pollable(&file, Interest::WRITABLE) { file_output_fds.push(fd); }
         track.file_outputs.push(FileOutputState::new(file, oa.output_kind.clone()));
     }
     ArgSetup {
@@ -198,11 +198,12 @@ pub(super) fn build_runner(args: &Args) -> Runner {
     }
     if let Some(sock) = server_socket { r.register_socket(sock); }
     if let Some(sock) = client_socket { r.register_socket(sock); }
-    r.registry().register_external_owned(SignalSource::new(&[libc::SIGINT, libc::SIGTERM]), Interest::READABLE, SHUTDOWN_EVENT);
-    let mut sigusr1 = SignalSource::new(&[libc::SIGUSR1]);
+    let signals = |set: &[libc::c_int]| Signals::new(set).unwrap_or_else(|e| panic!("signal handlers: {e}"));
+    r.registry().register_external_owned(signals(&[libc::SIGINT, libc::SIGTERM]), Interest::READABLE, SHUTDOWN_EVENT);
+    let mut sigusr1 = signals(&[libc::SIGUSR1]);
     r.registry().register_external(&mut sigusr1, Interest::READABLE, USR1_EVENT);
     r.endpoint.app_data_mut().sigusr1_source = Some(sigusr1);
-    let mut sigusr2 = SignalSource::new(&[libc::SIGUSR2]);
+    let mut sigusr2 = signals(&[libc::SIGUSR2]);
     r.registry().register_external(&mut sigusr2, Interest::READABLE, USR2_EVENT);
     r.endpoint.app_data_mut().sigusr2_source = Some(sigusr2);
     r
@@ -215,8 +216,14 @@ pub(super) fn finish_run(mut r: Runner) {
 pub(super) fn open_input(path: &std::path::Path) -> File {
     use std::os::unix::fs::OpenOptionsExt;
     let path = if path.as_os_str() == "-" { std::path::Path::new("/dev/stdin") } else { path };
-    std::fs::OpenOptions::new().read(true).custom_flags(libc::O_NONBLOCK)
-        .open(path).unwrap_or_else(|e| panic!("open {path:?}: {e}"))
+    let file = std::fs::OpenOptions::new().read(true).custom_flags(libc::O_NONBLOCK)
+        .open(path).unwrap_or_else(|e| panic!("open {path:?}: {e}"));
+    // macOS opens /dev/fd/N as a dup, ignoring O_NONBLOCK
+    unsafe {
+        let flags = libc::fcntl(file.as_raw_fd(), libc::F_GETFL);
+        libc::fcntl(file.as_raw_fd(), libc::F_SETFL, flags | libc::O_NONBLOCK);
+    }
+    file
 }
 
 pub(super) fn open_output(path: &std::path::Path) -> File {
@@ -238,22 +245,14 @@ pub(super) fn open_output(path: &std::path::Path) -> File {
     opts.open(path).unwrap_or_else(|e| panic!("open {path:?}: {e}"))
 }
 
-pub(super) fn is_epoll_compatible(file: &File) -> bool {
+/// Whether mio can wait for `file`: no regular file, nor a device without poll support like /dev/null.
+/// Probed on a scratch `Poll`, not asserted at the real registration.
+pub(super) fn is_pollable(file: &File, interest: Interest) -> bool {
     if file.metadata().map(|m| m.file_type().is_file()).unwrap_or(true) {
         return false;
     }
-    // Some character devices (notably /dev/null) aren't regular files but
-    // still don't implement poll, so epoll_ctl(ADD) on them fails with
-    // EPERM. Probe on a scratch epoll instance instead of asserting that
-    // here and panicking later when the real registration happens.
-    unsafe {
-        let epfd = libc::epoll_create1(0);
-        if epfd < 0 { return true; }
-        let mut ev = libc::epoll_event { events: libc::EPOLLIN as u32, u64: 0 };
-        let ok = libc::epoll_ctl(epfd, libc::EPOLL_CTL_ADD, file.as_raw_fd(), &mut ev) == 0;
-        libc::close(epfd);
-        ok
-    }
+    let Ok(poll) = mio::Poll::new() else { return true };
+    poll.registry().register(&mut mio::unix::SourceFd(&file.as_raw_fd()), mio::Token(0), interest).is_ok()
 }
 
 /// Builds the keepalive handler for an outbound connection (--connect)
@@ -445,13 +444,13 @@ pub(super) fn on_file_event(endpoint: &mut Endpoint<ConnAppData, AppData>, fd: &
     }
     if *fd == USR1_EVENT {
         let ad = endpoint.app_data_mut();
-        if let Some(ref source) = ad.sigusr1_source { source.drain(); }
+        if let Some(source) = &mut ad.sigusr1_source { source.pending().for_each(drop); }
         ad.usr1_requested = true;
         return;
     }
     if *fd == USR2_EVENT {
         let ad = endpoint.app_data_mut();
-        if let Some(ref source) = ad.sigusr2_source { source.drain(); }
+        if let Some(source) = &mut ad.sigusr2_source { source.pending().for_each(drop); }
         ad.usr2_requested = true;
         return;
     }

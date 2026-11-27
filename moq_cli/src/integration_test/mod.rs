@@ -79,12 +79,6 @@ fn sub_arg_multi(track: &NamespaceTrackname) -> SubArg {
     SubArg { multi: true, ..sub_arg(track) }
 }
 
-/// A `--sub#race` entry: subscribes via one candidate at a time, probing the
-/// rest and switching leaders as they pull ahead.
-fn sub_arg_race(track: &NamespaceTrackname) -> SubArg {
-    SubArg { race: true, ..sub_arg(track) }
-}
-
 /// A `--out` entry draining `track`'s cache to `file`, the common case.
 fn out_arg(track: &NamespaceTrackname, file: std::path::PathBuf) -> OutArg {
     OutArg { track: track.clone(), file: Some(file), output_kind: crate::file_output::OutputKind::auto(b'\n') }
@@ -97,7 +91,7 @@ fn pub_passive_arg(track: &NamespaceTrackname) -> PubArg {
 
 /// A `--in` entry feeding `track`'s cache from `fd`.
 fn in_arg(fd: i32, track: &NamespaceTrackname, delimiter: u8) -> InArg {
-    InArg { track: track.clone(), file: Some(format!("/proc/self/fd/{fd}").into()), delimiter }
+    InArg { track: track.clone(), file: Some(format!("/dev/fd/{fd}").into()), delimiter }
 }
 
 /// A bare `--pub <NS>` announcement for `track`'s namespace — needed since
@@ -122,15 +116,15 @@ fn qlog_events(dir: &Path) -> Vec<serde_json::Value> {
     events
 }
 
-/// Sends `sig` to the specific thread backing `handle`, not the whole process.
-/// `node::run_stoppable` runs every node's `SignalSource` in its own thread
-/// (each blocks the signal via `sigprocmask`, which — per glibc — affects only
-/// the calling thread); a process-wide `raise()`/`kill(getpid(), ..)` would be
-/// delivered to an arbitrary thread of this test binary, which could just kill
-/// the test process since most other threads don't block the signal at all.
-fn signal_node_thread(handle: &std::thread::JoinHandle<()>, sig: libc::c_int) {
-    use std::os::unix::thread::JoinHandleExt;
-    unsafe { libc::pthread_kill(handle.as_pthread_t(), sig) };
+/// A signal reaches every node of this test process: a test raising one holds this while its nodes run,
+/// so no other test's node takes its `--sigusr1` actions.
+fn signal_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+fn raise(sig: libc::c_int) {
+    unsafe { libc::raise(sig) };
 }
 
 /// `name` and `type` of every control message in `dir`'s qlogs.

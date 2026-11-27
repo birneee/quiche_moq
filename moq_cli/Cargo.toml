@@ -19,6 +19,7 @@ log = { workspace = true }
 url = { workspace = true }
 libc = { workspace = true }
 mio = { workspace = true, features = ["os-ext"] }
+signal-hook-mio = { version = "0.2", features = ["support-v1_0"] }
 quiche_mio_runner = { workspace = true }
 quiche_moq = { workspace = true, features = ["qlog"] }
 moq_core = { workspace = true }

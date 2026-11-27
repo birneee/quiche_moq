@@ -8,6 +8,7 @@ use super::*;
 /// (`Connection::send_ack_eliciting_on_path`) shows up as `frame_type: "ping"`.
 #[test]
 fn sigusr1_ping_sends_ping_observable_via_qlog() {
+    let _signals = signal_lock();
     let port = free_udp_port();
     let qlog_dir = tempfile::tempdir().unwrap();
 
@@ -23,7 +24,7 @@ fn sigusr1_ping_sends_ping_observable_via_qlog() {
     let (connect_thread, connect_stop) = node::run_stoppable(connect_args);
     std::thread::sleep(Duration::from_millis(200)); // allow the session to establish
 
-    signal_node_thread(&connect_thread, libc::SIGUSR1);
+    raise(libc::SIGUSR1);
     std::thread::sleep(Duration::from_millis(200)); // allow the ping to be sent and qlog'd
 
     drop(connect_stop);
@@ -49,6 +50,7 @@ fn sigusr1_ping_sends_ping_observable_via_qlog() {
 /// see padding_stream.rs) `moqt:padding_stream_started` / `..._stopped` qlog events.
 #[test]
 fn sigusr1_toggle_padding_stream_starts_then_stops_observable_via_qlog() {
+    let _signals = signal_lock();
     let port = free_udp_port();
     let qlog_dir = tempfile::tempdir().unwrap();
 
@@ -64,9 +66,9 @@ fn sigusr1_toggle_padding_stream_starts_then_stops_observable_via_qlog() {
     let (connect_thread, connect_stop) = node::run_stoppable(connect_args);
     std::thread::sleep(Duration::from_millis(200)); // allow the session to establish
 
-    signal_node_thread(&connect_thread, libc::SIGUSR1); // start
+    raise(libc::SIGUSR1); // start
     std::thread::sleep(Duration::from_millis(200));
-    signal_node_thread(&connect_thread, libc::SIGUSR1); // stop
+    raise(libc::SIGUSR1); // stop
     std::thread::sleep(Duration::from_millis(200));
 
     drop(connect_stop);
@@ -87,6 +89,7 @@ fn sigusr1_toggle_padding_stream_starts_then_stops_observable_via_qlog() {
 /// `moqt:control_message_created`, same mechanism used elsewhere in this file.
 #[test]
 fn sigusr1_unpub_withdraws_announced_namespace_observable_via_qlog() {
+    let _signals = signal_lock();
     let port = free_udp_port();
     let qlog_dir = tempfile::tempdir().unwrap();
 
@@ -109,7 +112,7 @@ fn sigusr1_unpub_withdraws_announced_namespace_observable_via_qlog() {
     let (connect_thread, connect_stop) = node::run_stoppable(connect_args);
     std::thread::sleep(Duration::from_millis(300)); // allow PUBLISH_NAMESPACE + REQUEST_OK round trip
 
-    signal_node_thread(&connect_thread, libc::SIGUSR1);
+    raise(libc::SIGUSR1);
     std::thread::sleep(Duration::from_millis(200)); // allow PUBLISH_NAMESPACE_DONE to be sent and qlog'd
 
     drop(connect_stop);
@@ -140,6 +143,7 @@ fn sigusr1_unpub_withdraws_announced_namespace_observable_via_qlog() {
 /// change, or a forwarder that never revisits out-of-order objects.
 #[test]
 fn sigusr1_migrate_does_not_stall_local_track_publishing() {
+    let _signals = signal_lock();
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -192,7 +196,7 @@ fn sigusr1_migrate_does_not_stall_local_track_publishing() {
     // Let a healthy pre-migration baseline establish (~150 lines at 2ms/line).
     std::thread::sleep(Duration::from_millis(300));
 
-    signal_node_thread(&sub_thread, libc::SIGUSR1); // SigAction::Migrate
+    raise(libc::SIGUSR1); // SigAction::Migrate
 
     // Give the migrated path time to validate and, critically, time for
     // publishing to resume afterward if it's going to (this is generous:

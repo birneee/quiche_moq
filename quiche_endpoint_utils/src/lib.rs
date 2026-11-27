@@ -1,6 +1,3 @@
-mod sigint;
-pub use sigint::SignalSource;
-
 use quiche_mio_runner::quiche_endpoint::{
     make_qlog_writer,
     quiche::{Connection, ConnectionId},
